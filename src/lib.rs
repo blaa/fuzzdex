@@ -6,6 +6,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use pyo3::exceptions;
 
+use unicode_segmentation::UnicodeSegmentation;
+
 type FastHash = ahash::RandomState;
 
 #[pyclass]
@@ -52,7 +54,7 @@ impl FuzzDex {
         }
     }
 
-    fn query<'py>(&mut self, py: Python<'py>,
+    fn search<'py>(&mut self, py: Python<'py>,
                   must: &str, should: Vec<&str>,
                   constraint: Option<usize>, limit: Option<usize>,
                   max_distance: Option<usize>) -> PyResult<PyObject> {
@@ -66,8 +68,16 @@ impl FuzzDex {
                     .max_distance(max_distance)
                     .limit(limit);
 
-                // TODO: Use allow_threads
-                let search_results = py.allow_threads(move || index.search(&query));
+                let search_results = index.search(&query);
+                /*
+                // TODO: Use allow_threads, but protect access because of cache.
+                // Otherwise RuntimeError: AlreadyBorrowed happens (see python tests)
+                let search_results = py.allow_threads(
+                    move || {
+                        let mut index = index.lock().unwrap();
+                        index.search(&query)
+                    });
+                */
                 let pyresults = search_results.iter()
                     .map(|result| {
                         let pyresult = PyDict::new(py);
@@ -85,11 +95,22 @@ impl FuzzDex {
             }
         }
     }
+
+}
+
+/* Helper to calculate levenhstein distance from Python without additional libs */
+#[pyfunction]
+fn distance(side_a: &str, side_b: &str) -> PyResult<usize> {
+    let graphemes_a = side_a.graphemes(true).collect::<Vec<&str>>();
+    let graphemes_b = side_b.graphemes(true).collect::<Vec<&str>>();
+    let (distance, _) = levenshtein_diff::distance(&graphemes_a, &graphemes_b);
+    Ok(distance)
 }
 
 #[pymodule]
 fn fuzzdex(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add("__doc__", "FUZZy inDEX in Rust")?;
     m.add_class::<FuzzDex>()?;
+    m.add_function(wrap_pyfunction!(distance, m)?)?;
     Ok(())
 }

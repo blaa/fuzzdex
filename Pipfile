@@ -1,0 +1,13 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+maturin = "==0.12.20"
+
+[dev-packages]
+pytest = "==7.1.2"
+
+[requires]
+python_version = "3.9"
