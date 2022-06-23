@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::iter::FromIterator;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use regex::Regex;
 use lazy_static::lazy_static;
@@ -12,9 +14,11 @@ use lru::LruCache;
 /* Fast hashing, but requires AES-ni extensions */
 type FastHash = ahash::RandomState;
 
-fn trigramize(token: &str) -> Vec<String> {
+pub fn trigramize(token: &str) -> Vec<String> {
+    /* NOTE: Maybe accent removal should be done during tokenization? That makes
+     * edit distance ignore accents though */
+
     /* Normalize accents as separate unicode characters and filter them out */
-    // let token: String = unidecode(token);
     let token: String = token.nfd().filter(|ch| !ch.is_mark_nonspacing()).collect();
 
     /* Unicode characters start at various byte boundaries */
@@ -25,15 +29,6 @@ fn trigramize(token: &str) -> Vec<String> {
         return Vec::new();
     }
 
-    /*
-    // Works, but doesn't allow for manual creation of trigrams:
-    let mut indices: Vec<usize> = token.char_indices().map(|(idx, letter)| idx).collect();
-    indices.push(token.len()); // To get a last slice indices correctly.
-
-    let mut trigrams = Vec::from_iter(
-    (0..indices.len() - 3).map(|i| &token[indices[i]..indices[i + 3]])
-    );
-    */
     let mut trigrams: Vec<String> = Vec::from_iter(
         (0..graphemes.len() - 2).map(|i| &graphemes[i..i + 3]).map(|s| s.join(""))
     );
@@ -54,7 +49,7 @@ lazy_static! {
 }
 
 /* Should this be Vec, or maybe hashset? What about non-unique tokens? */
-fn tokenize(phrase: &str) -> Vec<String> {
+pub fn tokenize(phrase: &str) -> Vec<String> {
     let tokens = SEPARATOR.split(phrase)
         .into_iter()
         .map(|t| t.trim().to_lowercase())
@@ -179,7 +174,7 @@ pub struct Index {
     phrases: HashMap<usize, PhraseEntry, FastHash>,
 
     /* LRU cache of must tokens */
-    cache: LruCache<String, Heatmap>,
+    cache: Mutex<LruCache<String, Arc<Heatmap>>>,
 }
 
 /* Produced by Index::finish() and can be queried */
@@ -190,7 +185,7 @@ impl Index {
         Index {
             db: HashMap::with_capacity_and_hasher(32768, FastHash::new()),
             phrases: HashMap::with_hasher(FastHash::new()),
-            cache: LruCache::new(30000),
+            cache: Mutex::new(LruCache::new(30000)),
         }
     }
 
@@ -247,12 +242,16 @@ impl Index {
 impl IndexReady {
 
     /* Create trigram heatmap for a given token */
-    fn create_heatmap(&mut self, token: &str) -> Heatmap {
-        /* TODO: LRU Cache */
+    fn create_heatmap(&self, token: &str) -> Arc<Heatmap> {
         let db = &self.0.db;
 
-        if let Some(heatmap) = self.0.cache.get(token) {
-            return heatmap.clone();
+        /* LRU cache updates position even on get and needs mutable reference */
+        {
+            let mut cache = self.0.cache.lock().unwrap();
+            if let Some(heatmap) = cache.get(token) {
+                /* We operate on reference-counted heatmaps to eliminate unnecessary copying */
+                return heatmap.clone();
+            }
         }
 
         let mut heatmap = Heatmap {
@@ -274,7 +273,11 @@ impl IndexReady {
             }
         }
 
-        self.0.cache.put(token.to_string(), heatmap.clone());
+        let heatmap = Arc::new(heatmap);
+        {
+            let mut cache = self.0.cache.lock().unwrap();
+            cache.put(token.to_string(), heatmap.clone());
+        }
         heatmap
     }
 
@@ -315,18 +318,14 @@ impl IndexReady {
         /* FIXME: This should be done once in one place. I'm unsure if it's ok */
         let must_graphemes = query.must.graphemes(true).collect::<Vec<&str>>();
 
-        // println!("HERE {} {} {} {}", heatmap.max, heatmap.score.len(), should_scores.len(), query.must);
-
         /* TODO: For now, we convert all entries into results, we could stop earlier */
         for (phrase_idx, tokens) in heatmap.score.iter() {
             let phrase = &index.phrases[phrase_idx];
             if let Some(constraint) = query.constraint {
                 if !phrase.constraints.contains(&constraint) {
-                    // println!("drop on constraint {}", phrase_idx);
                     continue
                 }
             }
-            // println!("  inside phrase={}", phrase.origin);
 
             let mut valid_tokens: Vec<(&String, usize, f32)> = tokens.iter()
                 /* Cut off low scoring tokens. TODO: Use trigram count */
@@ -334,13 +333,11 @@ impl IndexReady {
                 /* Measure levenhstein distance if filter is enabled */
                 .map(|(idx, score)| {
                     let token = &phrase.tokens[*idx as usize];
-                    // println!("    tok={} sc={}", token, score);
                     if query.max_distance.is_some() {
                         let token_graphemes = token.graphemes(true).collect::<Vec<&str>>();
                         let (distance, _) = levenshtein_diff::distance(&token_graphemes, &must_graphemes);
                         (token, distance, *score)
                     } else {
-                        // println!("Assuming distance 0, max is {}", max_distance);
                         (token, 0, *score)
                     }
                 })
@@ -352,10 +349,9 @@ impl IndexReady {
                 /* Solves PartialOrd for floats in a peculiar way. Should be fine though. */
                 |(token, distance, score)| (*distance,
                                             - ((*score) * 10000.0) as i64,
-                                            - (token.len() as i32))
+                                            (token.len() as i32))
             );
 
-            // println!("Got {} valid tokens finally", valid_tokens.len());
             if !valid_tokens.is_empty() {
                 /* Add result based on best token matching this phrase (lowest distance, highest score) */
                 let best = valid_tokens[0];
@@ -375,7 +371,9 @@ impl IndexReady {
         results.sort_unstable_by_key(|result|
                                      (result.distance,
                                       (- 1000.0 * result.score) as i64,
-                                      (- 1000.0 * result.should_score) as i64)
+                                      (- 1000.0 * result.should_score) as i64,
+                                      result.origin.len())
+
         );
 
         if let Some(limit) = query.limit {
@@ -385,7 +383,7 @@ impl IndexReady {
         results
     }
 
-    pub fn search(&mut self, query: &Query) -> Vec<Result> {
+    pub fn search(&self, query: &Query) -> Vec<Result> {
         let heatmap = self.create_heatmap(&query.must);
         let should_scores = self.should_scores(&heatmap, &query.should);
         let results = self.filtered_results(query, &heatmap, should_scores);

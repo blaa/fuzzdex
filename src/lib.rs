@@ -54,11 +54,11 @@ impl FuzzDex {
         }
     }
 
-    fn search<'py>(&mut self, py: Python<'py>,
+    fn search<'py>(&self, py: Python<'py>,
                   must: &str, should: Vec<&str>,
                   constraint: Option<usize>, limit: Option<usize>,
                   max_distance: Option<usize>) -> PyResult<PyObject> {
-        match &mut self.index_ready {
+        match &self.index_ready {
             None => {
                 Err(PyErr::new::<exceptions::PyRuntimeError, _>("Index is not yet finished."))
             },
@@ -68,16 +68,10 @@ impl FuzzDex {
                     .max_distance(max_distance)
                     .limit(limit);
 
-                let search_results = index.search(&query);
-                /*
-                // TODO: Use allow_threads, but protect access because of cache.
-                // Otherwise RuntimeError: AlreadyBorrowed happens (see python tests)
                 let search_results = py.allow_threads(
                     move || {
-                        let mut index = index.lock().unwrap();
                         index.search(&query)
                     });
-                */
                 let pyresults = search_results.iter()
                     .map(|result| {
                         let pyresult = PyDict::new(py);
@@ -107,10 +101,22 @@ fn distance(side_a: &str, side_b: &str) -> PyResult<usize> {
     Ok(distance)
 }
 
+#[pyfunction]
+fn trigramize(token: &str) -> PyResult<Vec<String>> {
+    Ok(fuzzdex::trigramize(token))
+}
+
+#[pyfunction]
+fn tokenize(phrase: &str) -> PyResult<Vec<String>> {
+    Ok(fuzzdex::tokenize(phrase))
+}
+
 #[pymodule]
 fn fuzzdex(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add("__doc__", "FUZZy inDEX in Rust")?;
     m.add_class::<FuzzDex>()?;
     m.add_function(wrap_pyfunction!(distance, m)?)?;
+    m.add_function(wrap_pyfunction!(trigramize, m)?)?;
+    m.add_function(wrap_pyfunction!(tokenize, m)?)?;
     Ok(())
 }
