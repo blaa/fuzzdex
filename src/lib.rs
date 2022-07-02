@@ -107,8 +107,9 @@ fn trigramize(token: &str) -> PyResult<Vec<String>> {
 }
 
 #[pyfunction]
-fn tokenize(phrase: &str) -> PyResult<Vec<String>> {
-    Ok(fuzzdex::tokenize(phrase))
+fn tokenize(phrase: &str, min_length: Option<usize>) -> PyResult<Vec<String>> {
+    let min_length = min_length.unwrap_or(2);
+    Ok(fuzzdex::tokenize(phrase, min_length))
 }
 
 #[pymodule]

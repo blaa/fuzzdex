@@ -149,9 +149,7 @@ def scan_streets(street, city_id, housenumber, limit):
         street_id = street_solution["index"]
         data = tree.get((city_id, street_id), {}).get(housenumber)
         if data:
-            # print("FOUND", city_id, street_id, data)
             return True
-        # print("SEARCH MORE street", street)
     return False
 
 
@@ -164,15 +162,11 @@ def scan_city(city, street, housenumber, limit=20):
             street_id = 0
             data = tree.get((city_id, street_id), {}).get(housenumber)
             if data is not None:
-                # print("FOUND", city_id, street_id, data)
                 return True
-            # print("Search MORE city 1", city, city_solution)
             continue
 
         if scan_streets(street, city_id, housenumber, limit):
             return True
-        # print("Search MORE city 2", city, city_solution)
-    #print(f"Not found {city}/{street}/{housenumber}")
     return False
 
 
@@ -201,7 +195,10 @@ config = {'limit': 30}
 def do(entry):
     "For parallel mapping"
     city, street, housenumber = entry
-    scan_city(city, street, housenumber, limit=config['limit'])
+    if scan_city(city, street, housenumber, limit=config['limit']):
+        return 1
+    else:
+        return 0
 
 
 def test_parallel(workers=8, limit=20):
@@ -210,13 +207,14 @@ def test_parallel(workers=8, limit=20):
 
     s = time()
     results = executor.map(do, test_data)
-    list(results)
+    results = list(results)
+    found = sum(results)
     took = time() - s
 
     cnt = len(test_data)
     print(f"DID {cnt} on {workers} threads in {took:.3f}, "
           f"{cnt / took:.2f}/s ({cnt/took/workers:.1f} per thread), "
-          f"{took / cnt * 1000:.4f}ms/q")
+          f"{took / cnt * 1000:.4f}ms/q ({found}/{len(results)})")
 
 
 def test_parallel_mp(workers=8, limit=20, chunk_size=None):
@@ -225,13 +223,14 @@ def test_parallel_mp(workers=8, limit=20, chunk_size=None):
 
     s = time()
     results = pool.map(do, test_data, chunk_size)
-    list(results)
+    results = list(results)
+    found = sum(results)
     took = time() - s
 
     cnt = len(test_data)
     print(f"DID {cnt} on {workers} processes in {took:.3f}, "
           f"{cnt / took:.2f}/s ({cnt/took/workers:.1f} per process), "
-          f"{took / cnt * 1000:.4f}ms/q")
+          f"{took / cnt * 1000:.4f}ms/q ({found}/{len(results)})")
 
 
 print("Pre-heat cache:")

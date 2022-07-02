@@ -49,11 +49,11 @@ lazy_static! {
 }
 
 /* Should this be Vec, or maybe hashset? What about non-unique tokens? */
-pub fn tokenize(phrase: &str) -> Vec<String> {
+pub fn tokenize(phrase: &str, min_length: usize) -> Vec<String> {
     let tokens = SEPARATOR.split(phrase)
         .into_iter()
         .map(|t| t.trim().to_lowercase())
-        .filter(|t| t.len() >= 2)
+        .filter(|t| t.len() >= min_length)
         .collect();
     tokens
 }
@@ -74,7 +74,7 @@ impl Query {
         let mut should_tokens: Vec<String> = should.iter().map(|s| s.to_string()).collect();
 
         /* Sometimes must token passed in query is not tokenized in the same way we do */
-        let mut tokens: Vec<String> = tokenize(must);
+        let mut tokens: Vec<String> = tokenize(must, 2);
         let must_token: String = if tokens.len() > 1 {
             tokens.sort_unstable_by_key(|token| - (token.len() as i64));
             for token in tokens[1..].iter() {
@@ -201,7 +201,7 @@ impl Index {
     /* Add a phrase mapped to an index. Phrase can be found by one of it's fuzzy-matched tokens */
     pub fn add_phrase(&mut self, phrase: &str, phrase_idx: usize,
                       constraints: Option<&HashSet<usize, FastHash>>) {
-        let phrase_tokens = tokenize(phrase);
+        let phrase_tokens = tokenize(phrase, 3);
         for (token_idx, token) in phrase_tokens.iter().enumerate() {
             if token.len() < 2 {
                 continue;
@@ -335,7 +335,8 @@ impl IndexReady {
                     let token = &phrase.tokens[*idx as usize];
                     if query.max_distance.is_some() {
                         let token_graphemes = token.graphemes(true).collect::<Vec<&str>>();
-                        let (distance, _) = levenshtein_diff::distance(&token_graphemes, &must_graphemes);
+                        let (distance, _) = levenshtein_diff::distance(&token_graphemes,
+                                                                       &must_graphemes);
                         (token, distance, *score)
                     } else {
                         (token, 0, *score)
@@ -353,7 +354,9 @@ impl IndexReady {
             );
 
             if !valid_tokens.is_empty() {
-                /* Add result based on best token matching this phrase (lowest distance, highest score) */
+                /* Add result based on best token matching this phrase (lowest
+                 * distance, highest score) */
+
                 let best = valid_tokens[0];
                 let should_score: f32 = *should_scores.get(phrase_idx).unwrap_or(&0.0);
                 results.push(
@@ -398,12 +401,13 @@ mod tests {
 
     #[test]
     fn it_tokenizes() {
-        let tokens: Vec<String> = tokenize("This are some-Words.");
+        let tokens: Vec<String> = tokenize("This are b some-Words.", 2);
         println!("Tokenized into {:?}", tokens);
         for token in ["this", "some", "words"].iter() {
             println!("Testing {}", token);
             assert!(tokens.contains(&token.to_string()));
         }
+        assert!(!tokens.contains(&"b".to_string()));
     }
 
     #[test]
@@ -435,7 +439,7 @@ mod tests {
         idx.add_phrase("This is an entry", 1, None);
         idx.add_phrase("Another entry entered.", 2, Some(&constraints));
         idx.add_phrase("Another about testing.", 3, None);
-        let mut idx = idx.finish();
+        let idx = idx.finish();
 
         /* First query */
         let query = Query::new("another", &["testing"]).limit(Some(60));
