@@ -1,6 +1,7 @@
 extern crate pyo3;
-pub mod fuzzdex;
 pub mod utils;
+pub mod query;
+pub mod fuzzdex;
 
 use std::collections::HashSet;
 
@@ -63,7 +64,7 @@ impl FuzzDex {
                 Err(PyErr::new::<exceptions::PyRuntimeError, _>("Index is not yet finished."))
             },
             Some(index) => {
-                let query = fuzzdex::Query::new(must, &should)
+                let query = query::Query::new(must, &should)
                     .constraint(constraint)
                     .max_distance(max_distance)
                     .limit(limit);
