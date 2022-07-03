@@ -1,62 +1,13 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::iter::FromIterator;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use regex::Regex;
-use lazy_static::lazy_static;
-use unicode_segmentation::UnicodeSegmentation;
-use unicode_normalization::UnicodeNormalization;
-use unicode_categories::UnicodeCategories;
 use lru::LruCache;
+use super::utils;
 
 /* Fast hashing, but requires AES-ni extensions */
 type FastHash = ahash::RandomState;
-
-pub fn trigramize(token: &str) -> Vec<String> {
-    /* NOTE: Maybe accent removal should be done during tokenization? That makes
-     * edit distance ignore accents though */
-
-    /* Normalize accents as separate unicode characters and filter them out */
-    let token: String = token.nfd().filter(|ch| !ch.is_mark_nonspacing()).collect();
-
-    /* Unicode characters start at various byte boundaries */
-    let graphemes: Vec<&str> = token.graphemes(true).collect::<Vec<&str>>();
-    let cnt = graphemes.len();
-    if cnt < 3 {
-        /* Could be longer in bytes, but it has only 1 grapheme */
-        return Vec::new();
-    }
-
-    let mut trigrams: Vec<String> = Vec::from_iter(
-        (0..graphemes.len() - 2).map(|i| &graphemes[i..i + 3]).map(|s| s.join(""))
-    );
-
-    /* Reduce errors on short strings */
-    match cnt {
-        4 | 5 => {
-            trigrams.push(graphemes[0].to_string() + graphemes[1] + graphemes[cnt - 1]);
-            trigrams.push(graphemes[0].to_string() + graphemes[cnt - 2] + graphemes[cnt - 1]);
-        }
-        _ => {}
-    }
-    trigrams
-}
-
-lazy_static! {
-    static ref SEPARATOR: Regex = Regex::new("[- \t\n'\"_.,]+").expect("invalid regexp");
-}
-
-/* Should this be Vec, or maybe hashset? What about non-unique tokens? */
-pub fn tokenize(phrase: &str, min_length: usize) -> Vec<String> {
-    let tokens = SEPARATOR.split(phrase)
-        .into_iter()
-        .map(|t| t.trim().to_lowercase())
-        .filter(|t| t.len() >= min_length)
-        .collect();
-    tokens
-}
 
 #[derive(Debug)]
 pub struct Query {
@@ -74,7 +25,7 @@ impl Query {
         let mut should_tokens: Vec<String> = should.iter().map(|s| s.to_string()).collect();
 
         /* Sometimes must token passed in query is not tokenized in the same way we do */
-        let mut tokens: Vec<String> = tokenize(must, 2);
+        let mut tokens: Vec<String> = utils::tokenize(must, 2);
         let must_token: String = if tokens.len() > 1 {
             tokens.sort_unstable_by_key(|token| - (token.len() as i64));
             for token in tokens[1..].iter() {
@@ -132,7 +83,7 @@ pub struct Result<'a> {
 struct Heatmap {
     /* Trigram score */
     /* phrase_idx -> token_idx -> score */
-    score: HashMap<usize, HashMap<u16, f32>, FastHash>,
+    score: HashMap<usize, HashMap<u16, f32, FastHash>, FastHash>,
     max: f32,
 }
 
@@ -190,7 +141,7 @@ impl Index {
     }
 
     fn add_token(&mut self, token: &str, phrase_idx: usize, token_idx: u16) {
-        for trigram in trigramize(token) {
+        for trigram in utils::trigramize(token) {
             let entry = self.db.entry(trigram).or_insert(
                 TrigramEntry { positions: Vec::new(), score: 0.0 }
             );
@@ -201,7 +152,7 @@ impl Index {
     /* Add a phrase mapped to an index. Phrase can be found by one of it's fuzzy-matched tokens */
     pub fn add_phrase(&mut self, phrase: &str, phrase_idx: usize,
                       constraints: Option<&HashSet<usize, FastHash>>) {
-        let phrase_tokens = tokenize(phrase, 3);
+        let phrase_tokens = utils::tokenize(phrase, 3);
         for (token_idx, token) in phrase_tokens.iter().enumerate() {
             if token.len() < 2 {
                 continue;
@@ -259,10 +210,11 @@ impl IndexReady {
             max: 0.0,
         };
 
-        for trigram in trigramize(token) {
+        for trigram in utils::trigramize(token) {
             if let Some(entry) = db.get(&trigram) {
                 for position in entry.positions.iter() {
-                    let by_token = heatmap.score.entry(position.phrase_idx).or_insert_with(HashMap::new);
+                    let by_token = heatmap.score.entry(position.phrase_idx).or_insert_with(
+                        || HashMap::with_capacity_and_hasher(32, FastHash::new()));
                     let token_score = by_token.entry(position.token_idx).or_insert(0.0);
                     *token_score += entry.score;
 
@@ -288,10 +240,10 @@ impl IndexReady {
         let db = &self.0.db;
 
         for token in should_tokens {
-            let mut trigrams = trigramize(token);
+            let mut trigrams = utils::trigramize(token);
             /* Use only first 4 trigrams for should scores */
             trigrams.truncate(3);
-            for trigram in trigramize(token) {
+            for trigram in utils::trigramize(token) {
                 if let Some(entry) = db.get(&trigram) {
                     for position in entry.positions.iter() {
                         if heatmap.score.contains_key(&position.phrase_idx) {
@@ -315,8 +267,6 @@ impl IndexReady {
         let index = &self.0;
         let max_distance: usize = query.max_distance.unwrap_or(100);
 
-        /* FIXME: This should be done once in one place. I'm unsure if it's ok */
-        let must_graphemes = query.must.graphemes(true).collect::<Vec<&str>>();
 
         /* TODO: For now, we convert all entries into results, we could stop earlier */
         for (phrase_idx, tokens) in heatmap.score.iter() {
@@ -334,9 +284,7 @@ impl IndexReady {
                 .map(|(idx, score)| {
                     let token = &phrase.tokens[*idx as usize];
                     if query.max_distance.is_some() {
-                        let token_graphemes = token.graphemes(true).collect::<Vec<&str>>();
-                        let (distance, _) = levenshtein_diff::distance(&token_graphemes,
-                                                                       &must_graphemes);
+                        let distance = utils::distance(&token, &query.must);
                         (token, distance, *score)
                     } else {
                         (token, 0, *score)
@@ -398,37 +346,6 @@ impl IndexReady {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn it_tokenizes() {
-        let tokens: Vec<String> = tokenize("This are b some-Words.", 2);
-        println!("Tokenized into {:?}", tokens);
-        for token in ["this", "some", "words"].iter() {
-            println!("Testing {}", token);
-            assert!(tokens.contains(&token.to_string()));
-        }
-        assert!(!tokens.contains(&"b".to_string()));
-    }
-
-    #[test]
-    fn it_trigramizes() {
-        let testcases = [
-            ("newyork", ["new", "ewy", "wyo", "yor", "ork"].to_vec()),
-            ("kлаус", ["kла", "лау", "аус"].to_vec()),
-            ("newyor", ["new", "ewy", "wyo", "yor"].to_vec()),
-            ("ewyor", ["ewy", "wyo", "yor"].to_vec()),
-            ("łódź", ["łod", "odz", "łdz", "łoz"].to_vec()),
-            ("y̆es", ["yes"].to_vec()),
-        ];
-        for (input, proper_trigrams) in testcases.iter() {
-            let trigrams: Vec<String> = trigramize(input);
-            println!("Trigramized {} into {:?}", input, trigrams);
-            for trigram in proper_trigrams.iter() {
-                println!("Testing {}", trigram);
-                assert!(trigrams.contains(&trigram.to_string()));
-            }
-        }
-    }
 
     #[test]
     fn it_works() {

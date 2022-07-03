@@ -1,7 +1,8 @@
 # FuzzDex
 
-Fuzzy Index for Python, written in Rust. Works like an error-tolerant
-dictionary keyed by a human input.
+FuzzDex is a fast Python library, written in Rust. It implements an in-memory
+`fuzzy index` that works like an error-tolerant dictionary keyed by a human
+input.
 
 ## Algorithm
 

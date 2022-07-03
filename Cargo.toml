@@ -1,9 +1,11 @@
 [package]
 name = "fuzzdex"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Tomasz bla Fortuna <bla@thera.be>"]
 edition = "2021"
 license = "MIT"
+homepage = "https://github.com/blaa/fuzzdex"
+keywords = ["fuzzy", "dictionary", "geocoding"]
 
 [lib]
 name = "fuzzdex"

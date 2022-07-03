@@ -6,8 +6,10 @@ egrep '^version' Cargo.toml
 rm -rf target/wheels/*whl
 
 # manylinux build using docker.
+docker run --rm -v $(pwd):/io ghcr.io/pyo3/maturin build --release -i python3.11
 docker run --rm -v $(pwd):/io ghcr.io/pyo3/maturin build --release -i python3.10
 docker run --rm -v $(pwd):/io ghcr.io/pyo3/maturin build --release -i python3.9
+docker run --rm -v $(pwd):/io ghcr.io/pyo3/maturin build --release -i python3.8
 docker run --rm -v $(pwd):/io ghcr.io/pyo3/maturin build --release -i python3.7
 
 # Manual upload:

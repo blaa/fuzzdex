@@ -1,12 +1,12 @@
 extern crate pyo3;
 pub mod fuzzdex;
+pub mod utils;
+
 use std::collections::HashSet;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use pyo3::exceptions;
-
-use unicode_segmentation::UnicodeSegmentation;
 
 type FastHash = ahash::RandomState;
 
@@ -95,21 +95,18 @@ impl FuzzDex {
 /* Helper to calculate levenhstein distance from Python without additional libs */
 #[pyfunction]
 fn distance(side_a: &str, side_b: &str) -> PyResult<usize> {
-    let graphemes_a = side_a.graphemes(true).collect::<Vec<&str>>();
-    let graphemes_b = side_b.graphemes(true).collect::<Vec<&str>>();
-    let (distance, _) = levenshtein_diff::distance(&graphemes_a, &graphemes_b);
-    Ok(distance)
+    Ok(utils::distance(side_a, side_b))
 }
 
 #[pyfunction]
 fn trigramize(token: &str) -> PyResult<Vec<String>> {
-    Ok(fuzzdex::trigramize(token))
+    Ok(utils::trigramize(token))
 }
 
 #[pyfunction]
 fn tokenize(phrase: &str, min_length: Option<usize>) -> PyResult<Vec<String>> {
     let min_length = min_length.unwrap_or(2);
-    Ok(fuzzdex::tokenize(phrase, min_length))
+    Ok(utils::tokenize(phrase, min_length))
 }
 
 #[pymodule]
