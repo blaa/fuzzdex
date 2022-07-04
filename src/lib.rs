@@ -18,7 +18,7 @@ pub struct FuzzDex {
     index_ready: Option<fuzzdex::IndexReady>,
 }
 
-// Python wrapper for fuzzdex proper.
+/// Python wrapper for fuzzdex proper.
 #[pymethods]
 impl FuzzDex {
     #[new]
@@ -93,17 +93,19 @@ impl FuzzDex {
 
 }
 
-/* Helper to calculate levenhstein distance from Python without additional libs */
+/// Helper to calculate levenhstein distance from Python without additional libs.
 #[pyfunction]
 fn distance(side_a: &str, side_b: &str) -> PyResult<usize> {
     Ok(utils::distance(side_a, side_b))
 }
 
+/// Python access to internal trigramizer.
 #[pyfunction]
 fn trigramize(token: &str) -> PyResult<Vec<String>> {
     Ok(utils::trigramize(token))
 }
 
+/// Python access to the internal tokenizer.
 #[pyfunction]
 fn tokenize(phrase: &str, min_length: Option<usize>) -> PyResult<Vec<String>> {
     let min_length = min_length.unwrap_or(2);

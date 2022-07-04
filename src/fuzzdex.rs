@@ -11,20 +11,20 @@ use super::query::Query;
 type FastHash = ahash::RandomState;
 
 
-/* Query result */
+/// Query result
 #[derive(Debug, Clone, PartialEq)]
 pub struct Result<'a> {
-    /* Original phrase before tokenization */
+    /// Original matched phrase before tokenization.
     pub origin: &'a str,
-    /* Returned index, a "value" */
+    /// Returned index, a "value" of dictionary.
     pub index: usize,
-    /* Token that matched the must token */
+    /// Token that matched the must token.
     pub token: &'a str,
-    /* Token distance to the query */
+    /// Token distance to the query.
     pub distance: usize,
-    /* Trigram score of the phrase */
+    /// Trigram score of the phrase.
     pub score: f32,
-    /* Bonus score from /should/ tokens */
+    /// Bonus score from /should/ tokens.
     pub should_score: f32,
 }
 
@@ -39,49 +39,50 @@ struct Heatmap {
 
 #[derive(Debug)]
 struct Position {
-    /* Phrase index / value */
+    /// Phrase index / value
     phrase_idx: usize,
-    /* Token within phrase */
+    /// Token within phrase
     token_idx: u16,
 }
 
-/* Trigram data inside the Index */
+/// Trigram data inside the Index
 #[derive(Debug)]
 struct TrigramEntry {
-    /* Where trigram appears (phrase / token) */
+    /// Where trigram appears (phrase / token).
     positions: Vec<Position>,
-    /* Trigram score; the more unique trigram, the higher score */
+    /// Trigram score; the more unique trigram, the higher score.
     score: f32,
 }
 
-/* Information stored about the inserted phrase */
+/// Information stored about the inserted phrase
 #[derive(Debug)]
 struct PhraseEntry {
-    /* Original phrase */
+    /// Original phrase.
     origin: String,
-    /* Tokens that build this phrase */
+    /// Tokens that build this phrase.
     tokens: Vec<String>,
-    /* Constraints with which this phrase is valid */
+    /// Constraints with which this phrase is valid.
     constraints: HashSet<usize, FastHash>
 }
 
-/* Initial Index instance that can gather entries, but can't be queried */
+/// Initial Index instance that can gather entries, but can't be queried.
 #[derive(Debug)]
 pub struct Index {
-    /* Trigram entries */
+    /// Trigram entries.
     db: HashMap<String, TrigramEntry, FastHash>,
 
-    /* Phrase metadata */
+    /// Phrase metadata.
     phrases: HashMap<usize, PhraseEntry, FastHash>,
 
-    /* LRU cache of must tokens */
+    /// LRU cache of must tokens.
     cache: Mutex<LruCache<String, Arc<Heatmap>>>,
 }
 
-/* Produced by Index::finish() and can be queried */
+/// Produced by Index::finish() and can be queried.
 pub struct IndexReady(Index);
 
 impl Index {
+    /// Create new empty fuzzdex.
     pub fn new() -> Index {
         Index {
             db: HashMap::with_capacity_and_hasher(32768, FastHash::new()),
@@ -99,7 +100,7 @@ impl Index {
         }
     }
 
-    /* Add a phrase mapped to an index. Phrase can be found by one of it's fuzzy-matched tokens */
+    /// Add a phrase mapped to an index. Phrase can be found by one of it's fuzzy-matched tokens.
     pub fn add_phrase(&mut self, phrase: &str, phrase_idx: usize,
                       constraints: Option<&HashSet<usize, FastHash>>) {
         let phrase_tokens = utils::tokenize(phrase, 3);
@@ -121,7 +122,7 @@ impl Index {
         });
     }
 
-    /* Consume original Index and return IndexReady class with querying ability */
+    /// Consume original Index and return IndexReady class with querying ability.
     pub fn finish(mut self) -> IndexReady {
         if self.db.is_empty() {
             return IndexReady(self);
@@ -139,10 +140,15 @@ impl Index {
     }
 }
 
+impl Default for Index {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl IndexReady {
 
-    /* Create trigram heatmap for a given token */
+    /// Create trigram heatmap for a given token.
     fn create_heatmap(&self, token: &str) -> Arc<Heatmap> {
         let db = &self.0.db;
 
@@ -183,7 +189,7 @@ impl IndexReady {
         heatmap
     }
 
-    fn should_scores(&self, heatmap: &Heatmap, should_tokens: &Vec<String>)
+    fn should_scores(&self, heatmap: &Heatmap, should_tokens: &[String])
                      -> HashMap<usize, f32, FastHash> {
         let mut map: HashMap<usize, f32, FastHash> = HashMap::with_capacity_and_hasher(heatmap.score.len(),
                                                                                        FastHash::new());
@@ -305,7 +311,7 @@ mod tests {
 
         idx.add_phrase("This is an entry", 1, None);
         idx.add_phrase("Another entry entered.", 2, Some(&constraints));
-        idx.add_phrase("Another about testing.", 3, None);
+        idx.add_phrase("Another about the testing.", 3, None);
         let idx = idx.finish();
 
         /* First query */
