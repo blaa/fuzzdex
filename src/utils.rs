@@ -7,7 +7,8 @@ use unicode_normalization::UnicodeNormalization;
 use unicode_categories::UnicodeCategories;
 
 lazy_static! {
-    static ref SEPARATOR: Regex = Regex::new("[- \t\n'\"_.,]+").expect("invalid regexp");
+    /* NOTE: Maybe detect a unicode group for interpunction chars */
+    static ref SEPARATOR: Regex = Regex::new("[- \t\n'’`„\"_.,;:=]+").expect("invalid regexp");
 }
 
 pub fn trigramize(token: &str) -> Vec<String> {
@@ -15,7 +16,13 @@ pub fn trigramize(token: &str) -> Vec<String> {
      * edit distance ignore accents though */
 
     /* Normalize accents as separate unicode characters and filter them out */
-    let token: String = token.nfd().filter(|ch| !ch.is_mark_nonspacing()).collect();
+    let mut token: String = token.nfd().filter(|ch| !ch.is_mark_nonspacing()).collect();
+
+    /* NOTE: Various language-specific letters. It's not required, but can
+     * handle certain human errors better */
+    for (ch_from, ch_to) in [("ł", "l"), ("ß", "ss")] {
+        token = token.replace(ch_from, ch_to);
+    }
 
     /* Unicode characters start at various byte boundaries */
     let graphemes: Vec<&str> = token.graphemes(true).collect::<Vec<&str>>();

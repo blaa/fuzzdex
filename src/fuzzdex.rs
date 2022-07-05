@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::cmp::Ordering;
 use itertools::Itertools;
 
 use lru::LruCache;
@@ -96,7 +97,7 @@ struct PhraseEntry {
 /// Initial Index instance that can gather entries, but can't be queried.
 #[derive(Debug)]
 pub struct Index {
-    /// Trigram entries.
+    /// Trigram entries: {"abc": TrigramEntry, "cde": ...}.
     db: HashMap<String, TrigramEntry, FastHash>,
 
     /// Phrase metadata.
@@ -125,6 +126,7 @@ impl Index {
                 TrigramEntry { positions: Vec::new(), score: 0.0 }
             );
             entry.positions.push(Position { phrase_idx, token_idx });
+            entry.score += 1.0;
         }
     }
 
@@ -155,14 +157,36 @@ impl Index {
         if self.db.is_empty() {
             return IndexReady(self);
         }
-        /* Can certainly be faster; can it be less verbose though? */
-        let lengths: Vec<usize> = self.db.values().map(|v| v.positions.len()).collect();
-        let max = *lengths.iter().max().unwrap_or(&1) as f32;
-        let min = *lengths.iter().min().unwrap_or(&0) as f32;
-        let range: f32 = max - min;
-        let coeff: f32 = 1.0 / (range + 0.00001);
-        for (_, entry) in self.db.iter_mut() {
-            entry.score = (max + 1.0 - (entry.positions.len() as f32)) * coeff;
+
+        /*
+         * Having good scoring for trigrams allows to return good results when
+         * the limit is set.
+         *
+         * For my two datasets data is rather skewed:
+         * - 1-2782 range, 57 average, 8 median.
+         * - 1-7280 range, 61 average, 7 median.
+         * So there's always some very popular trigrams and way many more
+         * "selective" ones.
+         *
+         * Let's try to put average count as "1".
+         *
+         * Hyperbolic function can smooth the scores and put them in nice range:
+         * 0.5 + tanh(x)/2
+         * Has range 0 - 1 for values -inf to inf (-3 to 3 de facto).
+         * 0.5 + tanh((avg - val - 1) / avg)/2
+         * Will have 0.5 at exactly average, distinguish all lower values
+         * (higher score) up to 0.87, and will distinguish plenty of higher
+         * values.
+         */
+
+        let average: f32 = self.db.values()
+            .map(|v| v.positions.len())
+            .sum::<usize>() as f32 / self.db.len() as f32;
+
+        for (_trigram, entry) in self.db.iter_mut() {
+            let input = entry.score;
+            let score = 0.5 + ((average - input - 1.0) / average).tanh() / 2.0;
+            entry.score = score;
         }
         IndexReady(self)
     }
@@ -272,7 +296,7 @@ impl IndexReady {
             .sorted_by(|(_, heat_a, phrase_a, should_a), (_, heat_b, phrase_b, should_b)| {
                 /* Sort by score and then by a should score; for identical - prefer shortest. */
                 (heat_b.total_score, should_b, phrase_a.origin.len()).partial_cmp(
-                    &(heat_a.total_score, should_a, phrase_b.origin.len())).unwrap()
+                    &(heat_a.total_score, should_a, phrase_b.origin.len())).unwrap_or(Ordering::Equal)
             });
 
         for (phrase_idx, phrase_heatmap, phrase, should_score) in phrases_by_score {
@@ -294,7 +318,7 @@ impl IndexReady {
                     /* TODO: Maybe score could be divided by token length */
                     let side_a = (score_a, token_b.len());
                     let side_b = (score_b, token_a.len());
-                    side_b.partial_cmp(&side_a).unwrap()
+                    side_b.partial_cmp(&side_a).unwrap_or(Ordering::Equal)
                 })
                 .map(|(token_score, token)| {
                     let distance = utils::distance(token, &query.must);
@@ -327,7 +351,7 @@ impl IndexReady {
         results.sort_unstable_by(|a, b| {
             let side_a = (a.distance, -a.score, -a.should_score, a.origin.len());
             let side_b = (b.distance, -b.score, -b.should_score, b.origin.len());
-            side_a.partial_cmp(&side_b).unwrap()
+            side_a.partial_cmp(&side_b).unwrap_or(Ordering::Equal)
         });
 
         results
