@@ -2,13 +2,20 @@ use super::utils;
 
 #[derive(Debug)]
 pub struct Query {
+    /// Token that must match with given maximal distance
     pub must: String,
+    /// Optional `should` tokens that increase phrase score so it has higher
+    /// probability of fitting within the `limit`.
     pub should: Vec<String>,
-    /* TODO: This could support a HashSet of various constraints (ORed) */
+    /// Optional constraints that must match.
+    /// TODO: This could support a HashSet of various constraints (ORed)
     pub constraint: Option<usize>,
+    /// Limit result count. Scanning can be faster with low limit.
     pub limit: Option<usize>,
-    /* Max levenhstein distance for "must" token to be a valid result */
+    /// Max levenshtein distance for "must" token to be a valid result.
     pub max_distance: Option<usize>,
+    /// Cutoff phrase scanning when it's score is < `cutoff*max_score`.
+    pub scan_cutoff: f32,
 }
 
 impl Query {
@@ -33,6 +40,7 @@ impl Query {
             constraint: None,
             limit: None,
             max_distance: Some(2),
+            scan_cutoff: 0.3,
         }
     }
 
@@ -48,6 +56,11 @@ impl Query {
 
     pub fn limit(mut self, limit: Option<usize>) -> Self {
         self.limit = limit;
+        self
+    }
+
+    pub fn scan_cutoff(mut self, cutoff: f32) -> Self {
+        self.scan_cutoff = cutoff;
         self
     }
 }

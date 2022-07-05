@@ -58,7 +58,8 @@ impl FuzzDex {
     fn search<'py>(&self, py: Python<'py>,
                   must: &str, should: Vec<&str>,
                   constraint: Option<usize>, limit: Option<usize>,
-                  max_distance: Option<usize>) -> PyResult<PyObject> {
+                  max_distance: Option<usize>,
+                  scan_cutoff: Option<f32>) -> PyResult<PyObject> {
         match &self.index_ready {
             None => {
                 Err(PyErr::new::<exceptions::PyRuntimeError, _>("Index is not yet finished."))
@@ -67,7 +68,8 @@ impl FuzzDex {
                 let query = query::Query::new(must, &should)
                     .constraint(constraint)
                     .max_distance(max_distance)
-                    .limit(limit);
+                    .limit(limit)
+                    .scan_cutoff(scan_cutoff.unwrap_or(0.3));
 
                 let search_results = py.allow_threads(
                     move || {
@@ -93,7 +95,7 @@ impl FuzzDex {
 
 }
 
-/// Helper to calculate levenhstein distance from Python without additional libs.
+/// Helper to calculate levenshtein distance from Python without additional libs.
 #[pyfunction]
 fn distance(side_a: &str, side_b: &str) -> PyResult<usize> {
     Ok(utils::distance(side_a, side_b))

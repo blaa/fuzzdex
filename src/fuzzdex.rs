@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex;
+use itertools::Itertools;
 
 use lru::LruCache;
 use super::utils;
@@ -28,13 +29,40 @@ pub struct Result<'a> {
     pub should_score: f32,
 }
 
-/* TODO Maybe instead of cloning - use Rc<>? */
+/* Trigram heatmap is a partial query result */
+#[derive(Debug, Clone)]
+struct PhraseHeatmap {
+    /* Token trigram score */
+    tokens: HashMap<u16, f32, FastHash>,
+    /* Total phrase score */
+    total_score: f32,
+}
+
+impl PhraseHeatmap {
+    fn new() -> PhraseHeatmap {
+        PhraseHeatmap {
+            tokens: HashMap::with_hasher(FastHash::new()),
+            total_score: 0.0,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct Heatmap {
     /* Trigram score */
     /* phrase_idx -> token_idx -> score */
-    score: HashMap<usize, HashMap<u16, f32, FastHash>, FastHash>,
-    max: f32,
+    phrases: HashMap<usize, PhraseHeatmap, FastHash>,
+    /* Max phrase score */
+    max_score: f32,
+}
+
+impl Heatmap {
+    fn new() -> Heatmap {
+        Heatmap {
+            phrases: HashMap::with_capacity_and_hasher(8, FastHash::new()),
+            max_score: 0.0,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -75,7 +103,7 @@ pub struct Index {
     phrases: HashMap<usize, PhraseEntry, FastHash>,
 
     /// LRU cache of must tokens.
-    cache: Mutex<LruCache<String, Arc<Heatmap>>>,
+    cache: Mutex<LruCache<String, Arc<Heatmap>, FastHash>>,
 }
 
 /// Produced by Index::finish() and can be queried.
@@ -87,7 +115,7 @@ impl Index {
         Index {
             db: HashMap::with_capacity_and_hasher(32768, FastHash::new()),
             phrases: HashMap::with_hasher(FastHash::new()),
-            cache: Mutex::new(LruCache::new(30000)),
+            cache: Mutex::new(LruCache::with_hasher(30000, FastHash::new())),
         }
     }
 
@@ -150,32 +178,34 @@ impl IndexReady {
 
     /// Create trigram heatmap for a given token.
     fn create_heatmap(&self, token: &str) -> Arc<Heatmap> {
-        let db = &self.0.db;
+        let index = &self.0;
+        let db = &index.db;
 
         /* LRU cache updates position even on get and needs mutable reference */
         {
-            let mut cache = self.0.cache.lock().unwrap();
+            let mut cache = index.cache.lock().unwrap();
             if let Some(heatmap) = cache.get(token) {
                 /* We operate on reference-counted heatmaps to eliminate unnecessary copying */
                 return heatmap.clone();
             }
         }
 
-        let mut heatmap = Heatmap {
-            score: HashMap::with_capacity_and_hasher(1024, FastHash::new()),
-            max: 0.0,
-        };
+        let mut heatmap = Heatmap::new();
 
         for trigram in utils::trigramize(token) {
             if let Some(entry) = db.get(&trigram) {
                 for position in entry.positions.iter() {
-                    let by_token = heatmap.score.entry(position.phrase_idx).or_insert_with(
-                        || HashMap::with_capacity_and_hasher(32, FastHash::new()));
-                    let token_score = by_token.entry(position.token_idx).or_insert(0.0);
+                    /* Get or create phrase-level entry */
+                    let phrase_heatmap = heatmap.phrases.entry(position.phrase_idx).or_insert_with(
+                        PhraseHeatmap::new);
+
+                    /* Get or create token-level entry */
+                    let token_score = phrase_heatmap.tokens.entry(position.token_idx).or_insert(0.0);
                     *token_score += entry.score;
 
-                    if *token_score > heatmap.max {
-                        heatmap.max = *token_score;
+                    phrase_heatmap.total_score += entry.score;
+                    if phrase_heatmap.total_score > heatmap.max_score {
+                        heatmap.max_score = phrase_heatmap.total_score;
                     }
                 }
             }
@@ -183,7 +213,7 @@ impl IndexReady {
 
         let heatmap = Arc::new(heatmap);
         {
-            let mut cache = self.0.cache.lock().unwrap();
+            let mut cache = index.cache.lock().unwrap();
             cache.put(token.to_string(), heatmap.clone());
         }
         heatmap
@@ -191,8 +221,9 @@ impl IndexReady {
 
     fn should_scores(&self, heatmap: &Heatmap, should_tokens: &[String])
                      -> HashMap<usize, f32, FastHash> {
-        let mut map: HashMap<usize, f32, FastHash> = HashMap::with_capacity_and_hasher(heatmap.score.len(),
-                                                                                       FastHash::new());
+        let mut map: HashMap<usize, f32, FastHash> = HashMap::with_capacity_and_hasher(
+            heatmap.phrases.len(), FastHash::new()
+        );
         let db = &self.0.db;
 
         for token in should_tokens {
@@ -202,7 +233,7 @@ impl IndexReady {
             for trigram in utils::trigramize(token) {
                 if let Some(entry) = db.get(&trigram) {
                     for position in entry.positions.iter() {
-                        if heatmap.score.contains_key(&position.phrase_idx) {
+                        if heatmap.phrases.contains_key(&position.phrase_idx) {
                             /* This phrase is within heatmap, we can calculate should score */
                             let score = map.entry(position.phrase_idx).or_insert(0.0);
                             *score += entry.score;
@@ -216,76 +247,88 @@ impl IndexReady {
 
     fn filtered_results(&self, query: &Query, heatmap: &Heatmap,
                         should_scores: HashMap<usize, f32, FastHash>) -> Vec<Result> {
-        let mut results: Vec<Result> = Vec::new();
+        let mut results: Vec<Result> = Vec::with_capacity(query.limit.unwrap_or(3));
         if let Some(limit) = query.limit {
             results.reserve(limit);
         }
         let index = &self.0;
-        let max_distance: usize = query.max_distance.unwrap_or(100);
+        let max_distance: usize = query.max_distance.unwrap_or(usize::MAX);
+        let limit: usize = query.limit.unwrap_or(usize::MAX);
 
-
-        /* TODO: For now, we convert all entries into results, we could stop earlier */
-        for (phrase_idx, tokens) in heatmap.score.iter() {
-            let phrase = &index.phrases[phrase_idx];
-            if let Some(constraint) = query.constraint {
-                if !phrase.constraints.contains(&constraint) {
-                    continue
+        let phrases_by_score = heatmap.phrases
+            .iter()
+            .map(|(idx, heatmap)| {
+                let phrase = &index.phrases[idx];
+                (idx, heatmap, phrase, *should_scores.get(idx).unwrap_or(&0.0))
+            })
+            .filter(|(_, _, phrase, _)| {
+                if let Some(constraint) = query.constraint {
+                    phrase.constraints.contains(&constraint)
+                } else {
+                    /* No constraint - return all */
+                    true
                 }
+            })
+            .sorted_by(|(_, heat_a, phrase_a, should_a), (_, heat_b, phrase_b, should_b)| {
+                /* Sort by score and then by a should score; for identical - prefer shortest. */
+                (heat_b.total_score, should_b, phrase_a.origin.len()).partial_cmp(
+                    &(heat_a.total_score, should_a, phrase_b.origin.len())).unwrap()
+            });
+
+        for (phrase_idx, phrase_heatmap, phrase, should_score) in phrases_by_score {
+            /* Iterate over potential phrases */
+
+            /* Drop scanning if the total score dropped below the cutoff*leader. */
+            if phrase_heatmap.total_score < query.scan_cutoff * heatmap.max_score {
+                // If the score is too low - it won't grow.
+                break;
             }
 
-            let mut valid_tokens: Vec<(&String, usize, f32)> = tokens.iter()
-                /* Cut off low scoring tokens. TODO: Use trigram count */
-                .filter(|(_idx, score)| (**score) > 0.4 * heatmap.max)
-                /* Measure levenhstein distance if filter is enabled */
-                .map(|(idx, score)| {
-                    let token = &phrase.tokens[*idx as usize];
-                    if query.max_distance.is_some() {
-                        let distance = utils::distance(&token, &query.must);
-                        (token, distance, *score)
-                    } else {
-                        (token, 0, *score)
-                    }
+            /* Iterate over tokens by decreasing trigram score until first matching is found */
+            let valid_token = phrase_heatmap.tokens
+                .iter()
+                .map(|(&idx, &score)|
+                     (score, &phrase.tokens[idx as usize]))
+                .sorted_by(|(score_a, token_a), (score_b, token_b)| {
+                    /* Prefer shortest for a given score */
+                    /* TODO: Maybe score could be divided by token length */
+                    let side_a = (score_a, token_b.len());
+                    let side_b = (score_b, token_a.len());
+                    side_b.partial_cmp(&side_a).unwrap()
                 })
-                /* Drop ones that are too far away */
-                .filter(|(_token, distance, _score)| distance <= &max_distance)
-                .collect();
+                .map(|(token_score, token)| {
+                    let distance = utils::distance(token, &query.must);
+                    (token, token_score, distance)
+                }).find(|(_token, _score, distance)| {
+                    *distance <= max_distance
+                });
 
-            valid_tokens.sort_unstable_by_key(
-                /* Solves PartialOrd for floats in a peculiar way. Should be fine though. */
-                |(token, distance, score)| (*distance,
-                                            - ((*score) * 10000.0) as i64,
-                                            (token.len() as i32))
-            );
-
-            if !valid_tokens.is_empty() {
+            if let Some((token, token_score, distance)) = valid_token {
                 /* Add result based on best token matching this phrase (lowest
                  * distance, highest score) */
 
-                let best = valid_tokens[0];
-                let should_score: f32 = *should_scores.get(phrase_idx).unwrap_or(&0.0);
                 results.push(
                     Result {
                         origin: &phrase.origin,
                         index: *phrase_idx,
-                        token: best.0,
-                        distance: best.1,
-                        score: best.2,
+                        score: token_score,
                         should_score,
+                        token,
+                        distance,
                     });
+
+                /* Early break if we reached limit */
+                if results.len() >= limit {
+                    break;
+                }
             }
         }
 
-        results.sort_unstable_by_key(|result|
-                                     (result.distance,
-                                      (- 1000.0 * result.score) as i64,
-                                      (- 1000.0 * result.should_score) as i64,
-                                      result.origin.len())
-
-        );
-
-        if let Some(limit) = query.limit {
-            results.truncate(limit);
-        }
+        results.sort_unstable_by(|a, b| {
+            let side_a = (a.distance, -a.score, -a.should_score, a.origin.len());
+            let side_b = (b.distance, -b.score, -b.should_score, b.origin.len());
+            side_a.partial_cmp(&side_b).unwrap()
+        });
 
         results
     }
@@ -293,8 +336,7 @@ impl IndexReady {
     pub fn search(&self, query: &Query) -> Vec<Result> {
         let heatmap = self.create_heatmap(&query.must);
         let should_scores = self.should_scores(&heatmap, &query.should);
-        let results = self.filtered_results(query, &heatmap, should_scores);
-        results
+        self.filtered_results(query, &heatmap, should_scores)
     }
 }
 
@@ -312,6 +354,7 @@ mod tests {
         idx.add_phrase("This is an entry", 1, None);
         idx.add_phrase("Another entry entered.", 2, Some(&constraints));
         idx.add_phrase("Another about the testing.", 3, None);
+        idx.add_phrase("Tester tested a test suite.", 4, None);
         let idx = idx.finish();
 
         /* First query */
@@ -349,5 +392,17 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].index, 1);
         assert!(results[0].should_score > 0.0, "First result should have non-zero should-score");
+
+        /* Test multiple tokens matching in single phrase */
+        let query = Query::new("test", &[]).limit(Some(60));
+        println!("Querying {:?}", query);
+        let results = idx.search(&query);
+
+        for result in &results {
+            println!("Got result {:?}", result);
+        }
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].index, 4);
     }
 }
