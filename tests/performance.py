@@ -17,6 +17,9 @@ from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import Pool
 
 
+config = {'limit': 30}
+
+
 @dataclass
 class Address:
     housenumber: str
@@ -29,6 +32,13 @@ class Entry:
     eid: int
     name: str
     constraints: set = field(default_factory=set)
+
+
+@dataclass
+class Index:
+    cities: fuzzdex.FuzzDex
+    streets: fuzzdex.FuzzDex
+    tree: dict
 
 
 def read_csv():
@@ -118,16 +128,9 @@ def load():
         street_idx.add_phrase(street.name, street.eid, street.constraints)
     street_idx.finish()
     print(f"Build took {time() - start}")
+    idx = Index(cities=city_idx, streets=street_idx, tree=tree)
 
-    return (city_idx, street_idx, tree, test_data)
-
-
-# read_csv()
-start = time()
-city_idx, street_idx, tree, test_data = load()
-
-took = time() - start
-print(f"Data loaded in {took}")
+    return (idx, test_data)
 
 
 def prepare(phrase):
@@ -138,44 +141,44 @@ def prepare(phrase):
     return tokens[0], tokens[1:]
 
 
-def scan_streets(street, city_id, housenumber, limit):
+def scan_streets(idx, street, city_id, housenumber, limit):
     must, should = prepare(street)
-    streets = street_idx.search(must, should, constraint=city_id,
-                                max_distance=2, limit=limit)
+    streets = idx.streets.search(must, should, constraint=city_id,
+                                 max_distance=2, limit=limit)
     if not streets:
         return False
 
     for street_solution in streets:
         street_id = street_solution["index"]
-        data = tree.get((city_id, street_id), {}).get(housenumber)
+        data = idx.tree.get((city_id, street_id), {}).get(housenumber)
         if data:
             return True
     return False
 
 
-def scan_city(city, street, housenumber, limit=20):
+def scan_city(idx, city, street, housenumber, limit=20):
     must, should = prepare(city)
-    cities = city_idx.search(must, should, max_distance=2, limit=limit)
+    cities = idx.cities.search(must, should, max_distance=2, limit=limit)
     for city_solution in cities:
         city_id = city_solution["index"]
         if not street:
             street_id = 0
-            data = tree.get((city_id, street_id), {}).get(housenumber)
+            data = idx.tree.get((city_id, street_id), {}).get(housenumber)
             if data is not None:
                 return True
             continue
 
-        if scan_streets(street, city_id, housenumber, limit):
+        if scan_streets(idx, street, city_id, housenumber, limit):
             return True
     return False
 
 
-def test_geo(limit=20):
+def test_geo(idx, test_data, limit=20):
     s = time()
     found = 0
     not_found = 0
     for i, (city, street, housenumber) in enumerate(test_data):
-        got = scan_city(city, street, housenumber, limit=limit)
+        got = scan_city(idx, city, street, housenumber, limit=limit)
         if got:
             found += 1
         else:
@@ -190,22 +193,21 @@ def test_geo(limit=20):
     print(f"found={found} not_found={not_found}")
 
 
-config = {'limit': 30}
-
 def do(entry):
     "For parallel mapping"
     city, street, housenumber = entry
-    if scan_city(city, street, housenumber, limit=config['limit']):
+    if scan_city(do.idx, city, street, housenumber, limit=config['limit']):
         return 1
     else:
         return 0
 
 
-def test_parallel(workers=8, limit=20):
+def test_parallel(idx, test_data, workers=8, limit=20):
     executor = ThreadPoolExecutor(max_workers=workers)
     config['limit'] = limit
 
     s = time()
+    do.idx = idx
     results = executor.map(do, test_data)
     results = list(results)
     found = sum(results)
@@ -217,11 +219,12 @@ def test_parallel(workers=8, limit=20):
           f"{took / cnt * 1000:.4f}ms/q ({found}/{len(results)})")
 
 
-def test_parallel_mp(workers=8, limit=20, chunk_size=None):
+def test_parallel_mp(idx, test_data, workers=8, limit=20, chunk_size=None):
     pool = Pool(processes=workers)
     config['limit'] = limit
 
     s = time()
+    do.idx = idx
     results = pool.map(do, test_data, chunk_size)
     results = list(results)
     found = sum(results)
@@ -233,14 +236,24 @@ def test_parallel_mp(workers=8, limit=20, chunk_size=None):
           f"{took / cnt * 1000:.4f}ms/q ({found}/{len(results)})")
 
 
-print("Pre-heat cache:")
-test_parallel(workers=1)
-print("OK:")
-test_parallel(workers=1)
-test_parallel(workers=3)
-test_parallel(workers=6)
-test_parallel(workers=8)
-test_parallel_mp(workers=1)
-test_parallel_mp(workers=3)
-test_parallel_mp(workers=6)
-test_parallel_mp(workers=8)
+def main():
+    # read_csv()
+    start = time()
+    idx, test_data = load()
+
+    took = time() - start
+    print(f"Data loaded in {took}")
+
+    print("Pre-heat cache:")
+    test_parallel(idx, test_data, workers=1)
+    print("OK:")
+    wrks = [1, 2, 3, 4, 5, 6, 8, 12, 16]
+    for wrk in wrks:
+        test_parallel(idx, test_data, workers=wrk)
+
+    for wrk in wrks:
+        test_parallel_mp(idx, test_data, workers=wrk)
+
+
+if __name__ == "__main__":
+    main()
