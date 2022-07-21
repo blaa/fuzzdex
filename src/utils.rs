@@ -27,17 +27,24 @@ pub fn trigramize(token: &str) -> Vec<String> {
     /* Unicode characters start at various byte boundaries */
     let graphemes: Vec<&str> = token.graphemes(true).collect::<Vec<&str>>();
     let cnt = graphemes.len();
-    if cnt < 3 {
-        /* Could be longer in bytes, but it has only 1 grapheme */
-        return Vec::new();
-    }
 
-    let mut trigrams: Vec<String> = Vec::from_iter(
-        (0..graphemes.len() - 2).map(|i| &graphemes[i..i + 3]).map(|s| s.join(""))
-    );
+    let mut trigrams: Vec<String> = if cnt >= 3 {
+        Vec::from_iter(
+            (0..graphemes.len() - 2).map(|i| &graphemes[i..i + 3]).map(|s| s.join(""))
+        )
+    } else {
+        Vec::new()
+    };
 
-    /* Reduce errors on short strings */
     match cnt {
+        /* Generate pseudo trigrams for 1 and 2 letter words. No typo-tolerance. */
+        1 => {
+            trigrams.push(graphemes[0].to_string() + "  ");
+        }
+        2 => {
+            trigrams.push(graphemes[0].to_string() + graphemes[1] + " ");
+        }
+        /* Increase typo-tolerance on short strings */
         4 | 5 => {
             trigrams.push(graphemes[0].to_string() + graphemes[1] + graphemes[cnt - 1]);
             trigrams.push(graphemes[0].to_string() + graphemes[cnt - 2] + graphemes[cnt - 1]);
@@ -72,7 +79,7 @@ mod tests {
     fn it_tokenizes() {
         let tokens: Vec<String> = tokenize("This are b some-Words.", 2);
         println!("Tokenized into {:?}", tokens);
-        for token in ["this", "some", "words"].iter() {
+        for token in ["this", "are", "some", "words"].iter() {
             println!("Testing {}", token);
             assert!(tokens.contains(&token.to_string()));
         }
@@ -86,8 +93,10 @@ mod tests {
             ("kлаус", ["kла", "лау", "аус"].to_vec()),
             ("newyor", ["new", "ewy", "wyo", "yor"].to_vec()),
             ("ewyor", ["ewy", "wyo", "yor"].to_vec()),
-            ("łódź", ["łod", "odz", "łdz", "łoz"].to_vec()),
+            ("łódź", ["lod", "odz", "ldz", "loz"].to_vec()),
             ("y̆es", ["yes"].to_vec()),
+            ("12", ["12 "].to_vec()),
+            ("1", ["1  "].to_vec()),
         ];
         for (input, proper_trigrams) in testcases.iter() {
             let trigrams: Vec<String> = trigramize(input);

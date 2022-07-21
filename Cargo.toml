@@ -1,6 +1,6 @@
 [package]
 name = "fuzzdex"
-version = "0.5.0"
+version = "0.6.0"
 authors = ["Tomasz bla Fortuna <bla@thera.be>"]
 edition = "2021"
 license = "MIT"
@@ -12,9 +12,9 @@ name = "fuzzdex"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.16.5", features = ["extension-module"] }
+pyo3 = { version = "^0.16", features = ["extension-module"] }
 levenshtein-diff = "0.2.1"
-lru = "0.7"
+lru = "^0.7"
 serde = { version = "1", features = ["derive"] }
 regex = "1"
 lazy_static = "1"

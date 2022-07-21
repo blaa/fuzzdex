@@ -23,7 +23,7 @@ impl Query {
         let mut should_tokens: Vec<String> = should.iter().map(|s| s.to_string()).collect();
 
         /* Sometimes must token passed in query is not tokenized in the same way we do */
-        let mut tokens: Vec<String> = utils::tokenize(must, 2);
+        let mut tokens: Vec<String> = utils::tokenize(must, 1);
         let must_token: String = if tokens.len() > 1 {
             tokens.sort_unstable_by_key(|token| - (token.len() as i64));
             for token in tokens[1..].iter() {

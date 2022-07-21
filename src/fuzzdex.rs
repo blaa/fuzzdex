@@ -133,11 +133,8 @@ impl Index {
     /// Add a phrase mapped to an index. Phrase can be found by one of it's fuzzy-matched tokens.
     pub fn add_phrase(&mut self, phrase: &str, phrase_idx: usize,
                       constraints: Option<&HashSet<usize, FastHash>>) {
-        let phrase_tokens = utils::tokenize(phrase, 3);
+        let phrase_tokens = utils::tokenize(phrase, 1);
         for (token_idx, token) in phrase_tokens.iter().enumerate() {
-            if token.len() < 2 {
-                continue;
-            }
             self.add_token(token, phrase_idx, token_idx as u16);
         }
         let constraints = match constraints {
@@ -428,5 +425,47 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].index, 4);
+    }
+
+    /// Street names often contain single digits that should correctly
+    /// be used in "should" statements.
+    #[test]
+    fn it_works_with_small_tokens() {
+
+        let mut idx = super::Index::new();
+
+        idx.add_phrase("1 May", 1, None);
+        idx.add_phrase("2 May", 2, None);
+        idx.add_phrase("3 May", 3, None);
+        idx.add_phrase("4 July", 4, None);
+        let idx = idx.finish();
+
+        /* First query */
+        let query = Query::new("may", &["1"]).limit(Some(1));
+        println!("Querying {:?}", query);
+        let results = idx.search(&query);
+        for result in &results {
+            println!("Got result {:?}", result);
+        }
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].index, 1);
+
+        let query = Query::new("may", &["2"]).limit(Some(1));
+        println!("Querying {:?}", query);
+        let results = idx.search(&query);
+        for result in &results {
+            println!("Got result {:?}", result);
+        }
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].index, 2);
+
+        let query = Query::new("may", &["3"]).limit(Some(1));
+        println!("Querying {:?}", query);
+        let results = idx.search(&query);
+        for result in &results {
+            println!("Got result {:?}", result);
+        }
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].index, 3);
     }
 }

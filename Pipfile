@@ -8,6 +8,7 @@ maturin = "==0.12.20"
 
 [dev-packages]
 pytest = "==7.1.2"
+ipython = "*"
 
 [requires]
 python_version = "3.9"
