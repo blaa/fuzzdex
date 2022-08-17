@@ -276,6 +276,12 @@ impl IndexReady {
         let max_distance: usize = query.max_distance.unwrap_or(usize::MAX);
         let limit: usize = query.limit.unwrap_or(usize::MAX);
 
+        /*
+         * Sort phrases by a trigram score. This is an approximation as our
+         * final metric - edit distance is better, but expensive to calculate.
+         * Phrases with higher score have a higher probability of having lower edit distance,
+         * but that is not certain.
+         */
         let phrases_by_score = heatmap.phrases
             .iter()
             .map(|(idx, heatmap)| {
@@ -296,11 +302,17 @@ impl IndexReady {
                     &(heat_a.total_score, should_a, phrase_b.origin.len())).unwrap_or(Ordering::Equal)
             });
 
+
+        /* Best distance so far */
+        let mut best_distance: usize = usize::MAX;
+
         for (phrase_idx, phrase_heatmap, phrase, should_score) in phrases_by_score {
             /* Iterate over potential phrases */
-
-            /* Drop scanning if the total score dropped below the cutoff*leader. */
-            if phrase_heatmap.total_score < query.scan_cutoff * heatmap.max_score {
+            /*
+             * Drop scanning if the total score dropped below the cutoff*leader
+             * and we already found an entry with low enough distance.
+             */
+            if best_distance <= 0 && phrase_heatmap.total_score < query.scan_cutoff * heatmap.max_score {
                 // If the score is too low - it won't grow.
                 break;
             }
@@ -338,8 +350,14 @@ impl IndexReady {
                         distance,
                     });
 
-                /* Early break if we reached limit */
-                if results.len() >= limit {
+                best_distance = std::cmp::min(distance, best_distance);
+
+                /*
+                 * Early break if:
+                 * - we reached the limit,
+                 * - we already have "good enough" result by the distance metric.
+                 */
+               if best_distance <= 0 && results.len() >= limit {
                     break;
                 }
             }
@@ -351,6 +369,7 @@ impl IndexReady {
             side_a.partial_cmp(&side_b).unwrap_or(Ordering::Equal)
         });
 
+        results.truncate(limit);
         results
     }
 
@@ -425,6 +444,33 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].index, 4);
+    }
+
+    #[test]
+    fn it_works_with_case_change_and_spellerror() {
+        let mut idx = super::Index::new();
+
+        idx.add_phrase("Warszawa", 1, None);
+        idx.add_phrase("Rakszawa", 2, None);
+        /* "asz" trigram will appear during a spelling error in wa(r)szawa */
+        idx.add_phrase("Waszeta", 3, None);
+        idx.add_phrase("Waszki", 4, None);
+        idx.add_phrase("Kwaszyn", 5, None);
+        idx.add_phrase("Jakszawa", 6, None);
+        idx.add_phrase("Warszew", 7, None);
+        let idx = idx.finish();
+
+        /* Query with lowercase and single spell error */
+        let query = Query::new("waszawa", &[]).limit(Some(1));
+        println!("Querying {:?}", query);
+        let results = idx.search(&query);
+
+        for result in &results {
+            println!("Got result {:?}", result);
+        }
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].index, 1);
     }
 
     /// Street names often contain single digits that should correctly
