@@ -64,9 +64,14 @@ pub fn tokenize(phrase: &str, min_length: usize) -> Vec<String> {
     tokens
 }
 
+/** Compare first 500 graphemes of strings and return a Levenshtein distance */
 pub fn distance(side_a: &str, side_b: &str) -> usize {
-    let graphemes_a = side_a.graphemes(true).collect::<Vec<&str>>();
-    let graphemes_b = side_b.graphemes(true).collect::<Vec<&str>>();
+    /* Levenshtein algorithm is recursive and will fail with too long tokens.
+     * Limit comparison to first X graphemes to eliminate possible DoS attacks.
+     * Tokens should be "words" anyway. Maybe return Result instead? */
+
+    let graphemes_a = side_a.graphemes(true).take(500).collect::<Vec<&str>>();
+    let graphemes_b = side_b.graphemes(true).take(500).collect::<Vec<&str>>();
     let (distance, _) = levenshtein_diff::distance(&graphemes_a, &graphemes_b);
     distance
 }

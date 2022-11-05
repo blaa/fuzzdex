@@ -5,10 +5,12 @@ name = "pypi"
 
 [packages]
 maturin = "==0.12.20"
+fuzzdex = "*"
+ipython = "*"
 
 [dev-packages]
 pytest = "==7.1.2"
 ipython = "*"
 
 [requires]
-python_version = "3.9"
+python_version = "3"

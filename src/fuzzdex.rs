@@ -33,15 +33,18 @@ pub struct Result<'a> {
 /* Trigram heatmap is a partial query result */
 #[derive(Debug, Clone)]
 struct PhraseHeatmap {
-    /* Token trigram score */
-    tokens: HashMap<u16, f32, FastHash>,
-    /* Total phrase score */
+    /// Phrase Index
+    phrase_idx: usize,
+    /// Token trigram score: token_idx -> score
+    tokens: HashMap<u32, f32, FastHash>,
+    /// Total phrase score
     total_score: f32,
 }
 
 impl PhraseHeatmap {
-    fn new() -> PhraseHeatmap {
+    fn new(phrase_idx: usize) -> PhraseHeatmap {
         PhraseHeatmap {
+            phrase_idx,
             tokens: HashMap::with_hasher(FastHash::new()),
             total_score: 0.0,
         }
@@ -70,8 +73,8 @@ impl Heatmap {
 struct Position {
     /// Phrase index / value
     phrase_idx: usize,
-    /// Token within phrase
-    token_idx: u16,
+    /// Token within phrase (first position in case multiple exist)
+    token_idx: u32,
 }
 
 /// Trigram data inside the Index
@@ -86,6 +89,8 @@ struct TrigramEntry {
 /// Information stored about the inserted phrase
 #[derive(Debug)]
 struct PhraseEntry {
+    /// Phrase index, as given by the user.
+    idx: usize,
     /// Original phrase.
     origin: String,
     /// Tokens that build this phrase.
@@ -120,7 +125,7 @@ impl Index {
         }
     }
 
-    fn add_token(&mut self, token: &str, phrase_idx: usize, token_idx: u16) {
+    fn add_token(&mut self, token: &str, phrase_idx: usize, token_idx: u32) {
         for trigram in utils::trigramize(token) {
             let entry = self.db.entry(trigram).or_insert(
                 TrigramEntry { positions: Vec::new(), score: 0.0 }
@@ -135,14 +140,16 @@ impl Index {
                       constraints: Option<&HashSet<usize, FastHash>>) {
         let phrase_tokens = utils::tokenize(phrase, 1);
         for (token_idx, token) in phrase_tokens.iter().enumerate() {
-            self.add_token(token, phrase_idx, token_idx as u16);
+            self.add_token(token, phrase_idx, token_idx as u32);
         }
         let constraints = match constraints {
             Some(constraints) => constraints.clone(),
             None => HashSet::with_hasher(FastHash::new())
         };
 
+        /* TODO: Migrate to PhraseEntry::new */
         self.phrases.insert(phrase_idx, PhraseEntry {
+            idx: phrase_idx,
             origin: phrase.to_string(),
             tokens: phrase_tokens,
             constraints,
@@ -197,7 +204,7 @@ impl Default for Index {
 
 impl IndexReady {
 
-    /// Create trigram heatmap for a given token.
+    /// Create a trigram heatmap for a given token.
     fn create_heatmap(&self, token: &str) -> Arc<Heatmap> {
         let index = &self.0;
         let db = &index.db;
@@ -218,7 +225,7 @@ impl IndexReady {
                 for position in entry.positions.iter() {
                     /* Get or create phrase-level entry */
                     let phrase_heatmap = heatmap.phrases.entry(position.phrase_idx).or_insert_with(
-                        PhraseHeatmap::new);
+                        || PhraseHeatmap::new(position.phrase_idx));
 
                     /* Get or create token-level entry */
                     let token_score = phrase_heatmap.tokens.entry(position.token_idx).or_insert(0.0);
@@ -283,51 +290,60 @@ impl IndexReady {
          * but that is not certain.
          */
         let phrases_by_score = heatmap.phrases
-            .iter()
-            .map(|(idx, heatmap)| {
-                let phrase = &index.phrases[idx];
-                (idx, heatmap, phrase, *should_scores.get(idx).unwrap_or(&0.0))
-            })
-            .filter(|(_, _, phrase, _)| {
+            .values()
+            .filter_map(|phrase_heatmap| {
+                /* Add phrase data to iterator */
+                let phrase = &index.phrases[&phrase_heatmap.phrase_idx];
+                let should_score = *should_scores.get(&phrase_heatmap.phrase_idx).unwrap_or(&0.0);
+                let extended = (phrase_heatmap,
+                                phrase, should_score);
                 if let Some(constraint) = query.constraint {
-                    phrase.constraints.contains(&constraint)
+                    /* Check constraint from query */
+                    if phrase.constraints.contains(&constraint) {
+                        Some(extended)
+                    } else {
+                        None
+                    }
                 } else {
                     /* No constraint - return all */
-                    true
+                    Some(extended)
                 }
             })
-            .sorted_by(|(_, heat_a, phrase_a, should_a), (_, heat_b, phrase_b, should_b)| {
+            .sorted_by(|(heat_a, phrase_a, should_a), (heat_b, phrase_b, should_b)| {
                 /* Sort by score and then by a should score; for identical - prefer shortest. */
-                (heat_b.total_score, should_b, phrase_a.origin.len()).partial_cmp(
-                    &(heat_a.total_score, should_a, phrase_b.origin.len())).unwrap_or(Ordering::Equal)
+                let side_a = (heat_b.total_score, should_b, phrase_a.origin.len());
+                let side_b = (heat_a.total_score, should_a, phrase_b.origin.len());
+                side_a.partial_cmp(&side_b).expect("Some scores were NaN, and they shouldn't")
             });
-
 
         /* Best distance so far */
         let mut best_distance: usize = usize::MAX;
 
-        for (phrase_idx, phrase_heatmap, phrase, should_score) in phrases_by_score {
+        for (phrase_heatmap, phrase, should_score) in phrases_by_score {
             /* Iterate over potential phrases */
+
             /*
              * Drop scanning if the total score dropped below the cutoff*leader
              * and we already found an entry with low enough distance.
              */
-            if best_distance <= 0 && phrase_heatmap.total_score < query.scan_cutoff * heatmap.max_score {
+            if best_distance == 0 && phrase_heatmap.total_score < query.scan_cutoff * heatmap.max_score {
                 // If the score is too low - it won't grow.
                 break;
             }
 
-            /* Iterate over tokens by decreasing trigram score until first matching is found */
+            /* Iterate over tokens by decreasing trigram score until first with
+             * an acceptable distance is found */
             let valid_token = phrase_heatmap.tokens
                 .iter()
-                .map(|(&idx, &score)|
-                     (score, &phrase.tokens[idx as usize]))
+                .map(|(&token_idx, &token_score)| {
+                    (token_score, &phrase.tokens[token_idx as usize])
+                })
                 .sorted_by(|(score_a, token_a), (score_b, token_b)| {
                     /* Prefer shortest for a given score */
                     /* TODO: Maybe score could be divided by token length */
                     let side_a = (score_a, token_b.len());
                     let side_b = (score_b, token_a.len());
-                    side_b.partial_cmp(&side_a).unwrap_or(Ordering::Equal)
+                    side_b.partial_cmp(&side_a).expect("Some token score was NaN, it should never be.")
                 })
                 .map(|(token_score, token)| {
                     let distance = utils::distance(token, &query.must);
@@ -343,7 +359,7 @@ impl IndexReady {
                 results.push(
                     Result {
                         origin: &phrase.origin,
-                        index: *phrase_idx,
+                        index: phrase.idx,
                         score: token_score,
                         should_score,
                         token,
@@ -357,9 +373,9 @@ impl IndexReady {
                  * - we reached the limit,
                  * - we already have "good enough" result by the distance metric.
                  */
-               if best_distance <= 0 && results.len() >= limit {
+               if best_distance == 0 && results.len() >= limit {
                     break;
-                }
+               }
             }
         }
 
@@ -513,5 +529,76 @@ mod tests {
         }
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].index, 3);
+    }
+
+    #[test]
+    fn it_behaves_with_repeating_patterns() {
+        let mut idx = super::Index::new();
+
+        let repeating_phrase = "abcaBC";
+        idx.add_phrase(&repeating_phrase, 1, None);
+        let idx = idx.finish();
+
+        /* Should generate only three trigrams: abc, bca, cab */
+        assert_eq!(3, idx.0.db.len());
+        assert!(idx.0.db.contains_key("abc"));
+        assert!(idx.0.db.contains_key("bca"));
+        assert!(idx.0.db.contains_key("cab"));
+
+        let query = Query::new("abc", &[]).max_distance(Some(3)).limit(Some(3));
+        let results = idx.search(&query);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].index, 1);
+        assert_eq!(results[0].distance, 3);
+
+        /* Similar but duplicates in separate tokens */
+        let mut idx = super::Index::new();
+        let repeating_phrase = "abcx uabc";
+        idx.add_phrase(&repeating_phrase, 1, None);
+        let idx = idx.finish();
+
+        let query = Query::new("abc", &[]).limit(Some(3));
+        let results = idx.search(&query);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].index, 1);
+        assert_eq!(results[0].distance, 1);
+    }
+
+    #[test]
+    fn it_behaves_with_too_long_inputs() {
+        let mut idx = super::Index::new();
+
+        /* Single token, multiple duplicated trigrams */
+        let long_string = "abc".repeat(1000);
+        idx.add_phrase(&long_string, 1, None);
+        let idx = idx.finish();
+
+        /* Generates 3 different trigrams */
+        assert_eq!(3, idx.0.db.len());
+        assert!(idx.0.db.contains_key("abc"));
+        assert!(idx.0.db.contains_key("bca"));
+        assert!(idx.0.db.contains_key("cab"));
+
+        println!("Added {}", long_string);
+        let query = Query::new(&long_string, &[]).limit(Some(3));
+        let results = idx.search(&query);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].index, 1);
+
+        /* A lot of small tokens */
+        let mut idx = super::Index::new();
+        let long_string = "abc ".repeat(70000);
+        idx.add_phrase(&long_string, 1, None);
+        let idx = idx.finish();
+
+        /* Generates only one trigram */
+        assert_eq!(1, idx.0.db.len());
+        assert!(idx.0.db.contains_key("abc"));
+
+        let query = Query::new("abc", &[]).limit(Some(3));
+        let results = idx.search(&query);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].index, 1);
+        assert_eq!(results[0].distance, 0);
     }
 }
