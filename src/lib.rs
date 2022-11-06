@@ -44,8 +44,10 @@ impl PyFuzzDex {
 
         match &mut self.index {
             FuzzDex::Indexer(indexer) => {
-                indexer.add_phrase(phrase, phrase_idx, constraints);
-                Ok(())
+                indexer.add_phrase(phrase, phrase_idx, constraints)
+                    .map_err(|_|
+                             PyErr::new::<exceptions::PyRuntimeError, _>(
+                                 "Duplicate phrase index."))
             }
             FuzzDex::Index(_) => {
                 Err(PyErr::new::<exceptions::PyRuntimeError, _>("Index is already finished."))

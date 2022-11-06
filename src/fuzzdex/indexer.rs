@@ -5,6 +5,23 @@ use crate::utils;
 use super::*;
 use super::seeker::*;
 
+impl PhraseEntry {
+    fn new(idx: usize, phrase: &str, constraints: Option<&HashSet<usize, FastHash>>) -> PhraseEntry {
+        let constraints = constraints.map_or_else(
+            || HashSet::with_hasher(FastHash::new()),
+            |c| c.clone()
+        );
+        let phrase_tokens = utils::tokenize(phrase, 1);
+
+        PhraseEntry {
+            idx,
+            origin: phrase.to_string(),
+            tokens: phrase_tokens,
+            constraints,
+        }
+    }
+}
+
 impl Indexer {
     /// Create a new empty fuzzdex in an "indexing" state.
     pub fn new() -> Indexer {
@@ -24,25 +41,21 @@ impl Indexer {
         }
     }
 
-    /// Add a phrase mapped to an index. Phrase can be found by one of it's fuzzy-matched tokens.
+    /// Add a phrase mapped to an index. Phrase can be found by one of it's
+    /// fuzzy-matched tokens. Phrase index must be unique within the index (or
+    /// Err is returned) and can reference some external dictionary.
     pub fn add_phrase(&mut self, phrase: &str, phrase_idx: usize,
-                      constraints: Option<&HashSet<usize, FastHash>>) {
-        let phrase_tokens = utils::tokenize(phrase, 1);
-        for (token_idx, token) in phrase_tokens.iter().enumerate() {
-            self.add_token(token, phrase_idx, token_idx as u32);
+                      constraints: Option<&HashSet<usize, FastHash>>) -> Result<(), ()> {
+        if self.phrases.contains_key(&phrase_idx) {
+            Err(())
+        } else {
+            let entry = PhraseEntry::new(phrase_idx, phrase, constraints);
+            for (token_idx, token) in entry.tokens.iter().enumerate() {
+                self.add_token(token, phrase_idx, token_idx as u32);
+            }
+            self.phrases.insert(phrase_idx, entry);
+            Ok(())
         }
-        let constraints = match constraints {
-            Some(constraints) => constraints.clone(),
-            None => HashSet::with_hasher(FastHash::new())
-        };
-
-        /* TODO: Migrate to PhraseEntry::new */
-        self.phrases.insert(phrase_idx, PhraseEntry {
-            idx: phrase_idx,
-            origin: phrase.to_string(),
-            tokens: phrase_tokens,
-            constraints,
-        });
     }
 
     /// Consume original Indexer and return Index class with querying ability.

@@ -10,10 +10,10 @@ fn it_works() {
     let mut constraints: HashSet<usize, FastHash> = HashSet::with_hasher(FastHash::new());
     constraints.insert(1);
 
-    idx.add_phrase("This is an entry", 1, None);
-    idx.add_phrase("Another entry entered.", 2, Some(&constraints));
-    idx.add_phrase("Another about the testing.", 3, None);
-    idx.add_phrase("Tester tested a test suite.", 4, None);
+    idx.add_phrase("This is an entry", 1, None).unwrap();
+    idx.add_phrase("Another entry entered.", 2, Some(&constraints)).unwrap();
+    idx.add_phrase("Another about the testing.", 3, None).unwrap();
+    idx.add_phrase("Tester tested a test suite.", 4, None).unwrap();
     let idx = idx.finish();
 
     /* First query */
@@ -69,14 +69,14 @@ fn it_works() {
 fn it_works_with_case_change_and_spellerror() {
     let mut idx = super::Indexer::new();
 
-    idx.add_phrase("Warszawa", 1, None);
-    idx.add_phrase("Rakszawa", 2, None);
+    idx.add_phrase("Warszawa", 1, None).unwrap();
+    idx.add_phrase("Rakszawa", 2, None).unwrap();
     /* "asz" trigram will appear during a spelling error in wa(r)szawa */
-    idx.add_phrase("Waszeta", 3, None);
-    idx.add_phrase("Waszki", 4, None);
-    idx.add_phrase("Kwaszyn", 5, None);
-    idx.add_phrase("Jakszawa", 6, None);
-    idx.add_phrase("Warszew", 7, None);
+    idx.add_phrase("Waszeta", 3, None).unwrap();
+    idx.add_phrase("Waszki", 4, None).unwrap();
+    idx.add_phrase("Kwaszyn", 5, None).unwrap();
+    idx.add_phrase("Jakszawa", 6, None).unwrap();
+    idx.add_phrase("Warszew", 7, None).unwrap();
     let idx = idx.finish();
 
     /* Query with lowercase and single spell error */
@@ -99,10 +99,10 @@ fn it_works_with_small_tokens() {
 
     let mut idx = super::Indexer::new();
 
-    idx.add_phrase("1 May", 1, None);
-    idx.add_phrase("2 May", 2, None);
-    idx.add_phrase("3 May", 3, None);
-    idx.add_phrase("4 July", 4, None);
+    idx.add_phrase("1 May", 1, None).unwrap();
+    idx.add_phrase("2 May", 2, None).unwrap();
+    idx.add_phrase("3 May", 3, None).unwrap();
+    idx.add_phrase("4 July", 4, None).unwrap();
     let idx = idx.finish();
 
     /* First query */
@@ -139,7 +139,7 @@ fn it_behaves_with_repeating_patterns() {
     let mut idx = super::Indexer::new();
 
     let repeating_phrase = "abcaBC";
-    idx.add_phrase(&repeating_phrase, 1, None);
+    idx.add_phrase(&repeating_phrase, 1, None).unwrap();
     let idx = idx.finish();
 
     /* Should generate only three trigrams: abc, bca, cab */
@@ -157,7 +157,7 @@ fn it_behaves_with_repeating_patterns() {
     /* Similar but duplicates in separate tokens */
     let mut idx = super::Indexer::new();
     let repeating_phrase = "abcx uabc";
-    idx.add_phrase(&repeating_phrase, 1, None);
+    idx.add_phrase(&repeating_phrase, 1, None).unwrap();
     let idx = idx.finish();
 
     let query = Query::new("abc", &[]).limit(Some(3));
@@ -173,7 +173,7 @@ fn it_behaves_with_too_long_inputs() {
 
     /* Single token, multiple duplicated trigrams */
     let long_string = "abc".repeat(1000);
-    idx.add_phrase(&long_string, 1, None);
+    idx.add_phrase(&long_string, 1, None).unwrap();
     let idx = idx.finish();
 
     /* Generates 3 different trigrams */
@@ -191,7 +191,7 @@ fn it_behaves_with_too_long_inputs() {
     /* A lot of small tokens */
     let mut idx = super::Indexer::new();
     let long_string = "abc ".repeat(70000);
-    idx.add_phrase(&long_string, 1, None);
+    idx.add_phrase(&long_string, 1, None).unwrap();
     let idx = idx.finish();
 
     /* Generates only one trigram */
@@ -203,4 +203,23 @@ fn it_behaves_with_too_long_inputs() {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].index, 1);
     assert_eq!(results[0].distance, 0);
+}
+
+#[test]
+fn it_detects_duplicate_phrase_idx() {
+    let mut idx = super::Indexer::new();
+
+    assert!(idx.add_phrase("phrase one, rather long", 1, None).is_ok());
+    assert!(idx.add_phrase("phrase two, duplicated id", 1, None).is_err());
+    assert!(idx.add_phrase("phrase three", 1, None).is_err());
+    let idx = idx.finish();
+
+    let query = Query::new("rather", &[]).limit(Some(3));
+    let results = idx.search(&query);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].index, 1);
+
+    let query = Query::new("duplicated", &[]).limit(Some(3));
+    let results = idx.search(&query);
+    assert_eq!(results.len(), 0);
 }

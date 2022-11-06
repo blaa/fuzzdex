@@ -13,7 +13,7 @@ use super::{Indexer, FastHash};
 
 /// Query result
 #[derive(Debug, Clone, PartialEq)]
-pub struct Result<'a> {
+pub struct SearchResult<'a> {
     /// Original matched phrase before tokenization.
     pub origin: &'a str,
     /// Returned index, a "value" of dictionary.
@@ -155,8 +155,8 @@ impl Index {
     }
 
     fn filtered_results(&self, query: &Query, heatmap: &Heatmap,
-                        should_scores: HashMap<usize, f32, FastHash>) -> Vec<Result> {
-        let mut results: Vec<Result> = Vec::with_capacity(query.limit.unwrap_or(3));
+                        should_scores: HashMap<usize, f32, FastHash>) -> Vec<SearchResult> {
+        let mut results: Vec<SearchResult> = Vec::with_capacity(query.limit.unwrap_or(3));
         if let Some(limit) = query.limit {
             results.reserve(limit);
         }
@@ -238,7 +238,7 @@ impl Index {
                  * distance, highest score) */
 
                 results.push(
-                    Result {
+                    SearchResult {
                         origin: &phrase.origin,
                         index: phrase.idx,
                         score: token_score,
@@ -270,7 +270,7 @@ impl Index {
         results
     }
 
-    pub fn search(&self, query: &Query) -> Vec<Result> {
+    pub fn search(&self, query: &Query) -> Vec<SearchResult> {
         let heatmap = self.create_heatmap(&query.must);
         let should_scores = self.should_scores(&heatmap, &query.should);
         self.filtered_results(query, &heatmap, should_scores)
