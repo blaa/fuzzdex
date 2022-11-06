@@ -1,4 +1,4 @@
-use super::utils;
+use crate::utils;
 
 #[derive(Debug)]
 pub struct Query {

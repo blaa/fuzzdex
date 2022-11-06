@@ -1,31 +1,31 @@
 extern crate pyo3;
 pub mod utils;
-pub mod query;
 pub mod fuzzdex;
 
 use std::collections::HashSet;
-
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use pyo3::exceptions;
 
+use crate::fuzzdex::{seeker, query};
+
 type FastHash = ahash::RandomState;
 
-#[pyclass]
-pub struct FuzzDex {
-    /* Will become None after creation of IndexReady */
-    index: Option<fuzzdex::Index>,
-    index_ready: Option<fuzzdex::IndexReady>,
+#[pyclass(name="FuzzDex")]
+pub struct PyFuzzDex {
+    /* Will become None after creation of Index */
+    indexer: Option<fuzzdex::Indexer>,
+    index: Option<seeker::Index>,
 }
 
 /// Python wrapper for fuzzdex proper.
 #[pymethods]
-impl FuzzDex {
+impl PyFuzzDex {
     #[new]
     fn new() -> PyResult<Self> {
-        let fuzzdex = FuzzDex {
-            index: Some(fuzzdex::Index::new()),
-            index_ready: None,
+        let fuzzdex = PyFuzzDex {
+            indexer: Some(fuzzdex::Indexer::new()),
+            index: None,
         };
         Ok(fuzzdex)
     }
@@ -38,8 +38,8 @@ impl FuzzDex {
             Some(&constraints)
         };
 
-        if let Some(index) = &mut self.index {
-            index.add_phrase(phrase, phrase_idx, constraints);
+        if let Some(indexer) = &mut self.indexer {
+            indexer.add_phrase(phrase, phrase_idx, constraints);
             Ok(())
         } else {
             Err(PyErr::new::<exceptions::PyRuntimeError, _>("Index is already finished."))
@@ -47,20 +47,21 @@ impl FuzzDex {
     }
 
     fn finish(&mut self) -> PyResult<()> {
-        if let Some(index) = self.index.take() {
-            self.index_ready = Some(index.finish());
+        if let Some(indexer) = self.indexer.take() {
+            self.index = Some(indexer.finish());
             Ok(())
         } else {
             Err(PyErr::new::<exceptions::PyRuntimeError, _>("Index is already finished."))
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn search<'py>(&self, py: Python<'py>,
-                  must: &str, should: Vec<&str>,
-                  constraint: Option<usize>, limit: Option<usize>,
-                  max_distance: Option<usize>,
-                  scan_cutoff: Option<f32>) -> PyResult<PyObject> {
-        match &self.index_ready {
+                   must: &str, should: Vec<&str>,
+                   constraint: Option<usize>, limit: Option<usize>,
+                   max_distance: Option<usize>,
+                   scan_cutoff: Option<f32>) -> PyResult<PyObject> {
+        match &self.index {
             None => {
                 Err(PyErr::new::<exceptions::PyRuntimeError, _>("Index is not yet finished."))
             },
@@ -117,7 +118,7 @@ fn tokenize(phrase: &str, min_length: Option<usize>) -> PyResult<Vec<String>> {
 #[pymodule]
 fn fuzzdex(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add("__doc__", "FUZZy inDEX in Rust")?;
-    m.add_class::<FuzzDex>()?;
+    m.add_class::<PyFuzzDex>()?;
     m.add_function(wrap_pyfunction!(distance, m)?)?;
     m.add_function(wrap_pyfunction!(trigramize, m)?)?;
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
