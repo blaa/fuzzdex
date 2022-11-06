@@ -11,11 +11,16 @@ use crate::fuzzdex::{seeker, query};
 
 type FastHash = ahash::RandomState;
 
+pub enum FuzzDex {
+    /// While being build.
+    Indexer(fuzzdex::Indexer),
+    /// When finished and queryable.
+    Index(seeker::Index)
+}
+
 #[pyclass(name="FuzzDex")]
 pub struct PyFuzzDex {
-    /* Will become None after creation of Index */
-    indexer: Option<fuzzdex::Indexer>,
-    index: Option<seeker::Index>,
+    index: FuzzDex,
 }
 
 /// Python wrapper for fuzzdex proper.
@@ -24,8 +29,7 @@ impl PyFuzzDex {
     #[new]
     fn new() -> PyResult<Self> {
         let fuzzdex = PyFuzzDex {
-            indexer: Some(fuzzdex::Indexer::new()),
-            index: None,
+            index: FuzzDex::Indexer(fuzzdex::Indexer::new())
         };
         Ok(fuzzdex)
     }
@@ -38,20 +42,27 @@ impl PyFuzzDex {
             Some(&constraints)
         };
 
-        if let Some(indexer) = &mut self.indexer {
-            indexer.add_phrase(phrase, phrase_idx, constraints);
-            Ok(())
-        } else {
-            Err(PyErr::new::<exceptions::PyRuntimeError, _>("Index is already finished."))
+        match &mut self.index {
+            FuzzDex::Indexer(indexer) => {
+                indexer.add_phrase(phrase, phrase_idx, constraints);
+                Ok(())
+            }
+            FuzzDex::Index(_) => {
+                Err(PyErr::new::<exceptions::PyRuntimeError, _>("Index is already finished."))
+            }
         }
     }
 
     fn finish(&mut self) -> PyResult<()> {
-        if let Some(indexer) = self.indexer.take() {
-            self.index = Some(indexer.finish());
-            Ok(())
-        } else {
-            Err(PyErr::new::<exceptions::PyRuntimeError, _>("Index is already finished."))
+        match &mut self.index {
+            FuzzDex::Indexer(indexer) => {
+                let indexer = std::mem::take(indexer);
+                self.index = FuzzDex::Index(indexer.finish());
+                Ok(())
+            }
+            FuzzDex::Index(_) => {
+                Err(PyErr::new::<exceptions::PyRuntimeError, _>("Index is already finished."))
+            }
         }
     }
 
@@ -62,10 +73,10 @@ impl PyFuzzDex {
                    max_distance: Option<usize>,
                    scan_cutoff: Option<f32>) -> PyResult<PyObject> {
         match &self.index {
-            None => {
+            FuzzDex::Indexer(_) => {
                 Err(PyErr::new::<exceptions::PyRuntimeError, _>("Index is not yet finished."))
-            },
-            Some(index) => {
+            }
+            FuzzDex::Index(index) => {
                 let query = query::Query::new(must, &should)
                     .constraint(constraint)
                     .max_distance(max_distance)
