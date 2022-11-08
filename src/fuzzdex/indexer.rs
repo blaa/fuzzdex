@@ -58,10 +58,11 @@ impl Indexer {
         }
     }
 
-    /// Consume original Indexer and return Index class with querying ability.
-    pub fn finish(mut self) -> Index {
+    /// Consume original Indexer and return Index class with querying ability
+    /// and given internal cache size.
+    pub fn finish_with_cache(mut self, cache_size: usize) -> Index {
         if self.db.is_empty() {
-            return Index::new(self);
+            return Index::new(self, cache_size);
         }
 
         /*
@@ -94,7 +95,13 @@ impl Indexer {
             let score = 0.5 + ((average - input - 1.0) / average).tanh() / 2.0;
             entry.score = score;
         }
-        Index::new(self)
+        Index::new(self, cache_size)
+    }
+
+    /// Consume original Indexer and return Index class with querying ability
+    /// and default cache size of 10k entries.
+    pub fn finish(self) -> Index {
+        self.finish_with_cache(10000)
     }
 }
 

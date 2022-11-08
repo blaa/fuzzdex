@@ -19,6 +19,10 @@ pub struct Query {
 }
 
 impl Query {
+    /// Create a Query with must/should tokens. You should tokenize things and
+    /// pass a single token, but if the internal tokenizer splits must into many
+    /// tokens, the longest will be set as a `must` and others moved to
+    /// `should`.
     pub fn new(must: &str, should: &[&str]) -> Self {
         let mut should_tokens: Vec<String> = should.iter().map(|s| s.to_string()).collect();
 

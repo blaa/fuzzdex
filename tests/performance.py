@@ -246,13 +246,18 @@ def main():
 
     print("Pre-heat cache:")
     test_parallel(idx, test_data, workers=1)
+    print("Cache Cities/Streets", idx.cities.cache_stats(), idx.streets.cache_stats())
     print("OK:")
     wrks = [1, 2, 3, 4, 5, 6, 8, 12, 16]
     for wrk in wrks:
         test_parallel(idx, test_data, workers=wrk)
 
+    print("Cache Cities/Streets", idx.cities.cache_stats(), idx.streets.cache_stats())
+
     for wrk in wrks:
         test_parallel_mp(idx, test_data, workers=wrk)
+
+    print("Cache Cities/Streets", idx.cities.cache_stats(), idx.streets.cache_stats())
 
 
 if __name__ == "__main__":

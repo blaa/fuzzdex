@@ -15,21 +15,22 @@ fn it_works() {
     idx.add_phrase("Another about the testing.", 3, None).unwrap();
     idx.add_phrase("Tester tested a test suite.", 4, None).unwrap();
     let idx = idx.finish();
+    assert_eq!(idx.cache_stats().inserts, 0);
 
     /* First query */
     let query = Query::new("another", &["testing"]).limit(Some(60));
     println!("Querying {:?}", query);
     let results = idx.search(&query);
 
-    for result in &results {
-        println!("Got result {:?}", result);
-    }
-
     assert_eq!(results.len(), 2);
     assert_eq!(results[0].index, 3);
     assert_eq!(results[1].index, 2);
     assert!(results[0].should_score > results[1].should_score,
             "First result should have higher score than second one");
+
+    assert_eq!(idx.cache_stats().hits, 0);
+    assert_eq!(idx.cache_stats().misses, 1);
+    assert_eq!(idx.cache_stats().inserts, 1);
 
     /* Test constraint */
     let query = Query::new("another", &["testing"])
@@ -39,6 +40,11 @@ fn it_works() {
 
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].index, 2);
+
+    /* Asked for the same token */
+    assert_eq!(idx.cache_stats().hits, 1);
+    assert_eq!(idx.cache_stats().misses, 1);
+    assert_eq!(idx.cache_stats().inserts, 1);
 
     /* Third query */
     let query = Query::new("this", &["entry"]).limit(Some(60));

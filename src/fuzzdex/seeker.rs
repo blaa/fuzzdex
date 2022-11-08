@@ -49,6 +49,21 @@ impl PhraseHeatmap {
     }
 }
 
+#[derive(Clone, Default, Debug)]
+pub struct CacheStats {
+    pub hits: usize,
+    pub misses: usize,
+    pub inserts: usize,
+    /// Current size of the cache, calculated on request.
+    pub size: usize,
+}
+
+#[derive(Debug)]
+struct Cache {
+    stats: CacheStats,
+    heatmaps: LruCache<String, Arc<Heatmap>, FastHash>,
+}
+
 #[derive(Debug, Clone)]
 struct Heatmap {
     /* Trigram score */
@@ -73,15 +88,19 @@ pub struct Index {
     pub index: Indexer,
 
     /// LRU cache of must tokens.
-    cache: Mutex<LruCache<String, Arc<Heatmap>, FastHash>>,
+    cache: Mutex<Cache>,
 }
 
 impl Index {
-
-    pub fn new(indexer: Indexer) -> Index {
+    /// Create new searchable index with a given cache size.
+    pub fn new(indexer: Indexer, cache_size: usize) -> Index {
+        let cache = Cache {
+            stats: CacheStats::default(),
+            heatmaps: LruCache::with_hasher(cache_size, FastHash::new()),
+        };
         Index {
             index: indexer,
-            cache: Mutex::new(LruCache::with_hasher(30000, FastHash::new())),
+            cache: Mutex::new(cache),
         }
     }
 
@@ -93,10 +112,13 @@ impl Index {
         /* LRU cache updates position even on get and needs mutable reference */
         {
             let mut cache = self.cache.lock().unwrap();
-            if let Some(heatmap) = cache.get(token) {
+            let heatmap = cache.heatmaps.get(token).map(|h| h.clone());
+            if let Some(heatmap) = heatmap {
                 /* We operate on reference-counted heatmaps to eliminate unnecessary copying */
-                return heatmap.clone();
+                cache.stats.hits += 1;
+                return heatmap;
             }
+            cache.stats.misses += 1;
         }
 
         let mut heatmap = Heatmap::new();
@@ -123,7 +145,8 @@ impl Index {
         let heatmap = Arc::new(heatmap);
         {
             let mut cache = self.cache.lock().unwrap();
-            cache.put(token.to_string(), heatmap.clone());
+            cache.heatmaps.put(token.to_string(), heatmap.clone());
+            cache.stats.inserts += 1;
         }
         heatmap
     }
@@ -274,5 +297,12 @@ impl Index {
         let heatmap = self.create_heatmap(&query.must);
         let should_scores = self.should_scores(&heatmap, &query.should);
         self.filtered_results(query, &heatmap, should_scores)
+    }
+
+    pub fn cache_stats(&self) -> CacheStats {
+        let cache = self.cache.lock().unwrap();
+        let mut stats = cache.stats.clone();
+        stats.size = cache.heatmaps.len();
+        stats
     }
 }

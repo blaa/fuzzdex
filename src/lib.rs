@@ -55,11 +55,16 @@ impl PyFuzzDex {
         }
     }
 
-    fn finish(&mut self) -> PyResult<()> {
+    /// Finish indexing and move into searchable index with given internal cache size.
+    fn finish(&mut self, cache_size: Option<usize>) -> PyResult<()> {
+        let cache_size = cache_size.unwrap_or(10000);
+        if cache_size == 0 {
+            return Err(PyErr::new::<exceptions::PyRuntimeError, _>("Cache size must be at least 1"))
+        }
         match &mut self.index {
             FuzzDex::Indexer(indexer) => {
                 let indexer = std::mem::take(indexer);
-                self.index = FuzzDex::Index(indexer.finish());
+                self.index = FuzzDex::Index(indexer.finish_with_cache(cache_size));
                 Ok(())
             }
             FuzzDex::Index(_) => {
@@ -68,6 +73,26 @@ impl PyFuzzDex {
         }
     }
 
+    /// Query index using given criterions.
+    fn cache_stats<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+        match &self.index {
+            FuzzDex::Indexer(_) => {
+                Err(PyErr::new::<exceptions::PyRuntimeError, _>("Index is not yet finished."))
+            }
+            FuzzDex::Index(index) => {
+                //let result = PyDict::new(py, pyresults);
+                let stats = index.cache_stats();
+                let pystats = PyDict::new(py);
+                pystats.set_item("hits", stats.hits).unwrap();
+                pystats.set_item("misses", stats.misses).unwrap();
+                pystats.set_item("inserts", stats.inserts).unwrap();
+                pystats.set_item("size", stats.size).unwrap();
+                Ok(pystats.into())
+            }
+        }
+    }
+
+    /// Query index using given criterions.
     #[allow(clippy::too_many_arguments)]
     fn search<'py>(&self, py: Python<'py>,
                    must: &str, should: Vec<&str>,
