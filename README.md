@@ -67,23 +67,25 @@ cities.finish()
 streets.finish()
 
 # warszawa matches warsaw at editing distance 2.
-cities.search("warszawa", [], max_distance=2, limit=60)
+cities.search(["warszawa"], [], max_distance=2, limit=60)
 #    [{'origin': 'Warsaw', 'index': 1, 'token': 'warsaw',
 #      'distance': 2, 'score': 200000.0, 'should_score': 0.0}]
-
+#
+# NOTE: Currently only a single `must` token is supported.
+#
 # `świat` adds additional should score to the result and places it higher
 # in case the limit is set:
-streets.search("nowy", ["świat"], max_distance=2, constraint=1)
+streets.search(["nowy"], ["świat"], max_distance=2, constraint=1)
 #    [{'origin': 'Nowy Świat', 'index': 2, 'token': 'nowy',
 #      'distance': 0, 'score': 5.999, 'should_score': 7.4999}]
 
 # Won't match with constraint 2.
-streets.search("nowy", ["świat"], constraint=2)
+streets.search(["nowy"], ["świat"], constraint=2)
 #    []
 
 # Quering for `czerniawska` will return `czerniakowska` (no constraints),
 # but with a lower score and higher distance:
-In [22]: streets.search("czerniawska", [], max_distance=2)
+In [22]: streets.search(["czerniawska"], [], max_distance=2)
 Out[22]:
 #  [{'origin': 'Czerniawska', 'index': 4, 'token': 'czerniawska',
 #   'distance': 0, 'score': 9.49995231628418, 'should_score': 0.0},

@@ -137,8 +137,8 @@ def prepare(phrase):
     tokens = fuzzdex.tokenize(phrase)
     tokens.sort(key=len, reverse=True)
     if not tokens:
-        return phrase, []
-    return tokens[0], tokens[1:]
+        return [phrase], []
+    return [tokens[0]], tokens[1:]
 
 
 def scan_streets(idx, street, city_id, housenumber, limit):

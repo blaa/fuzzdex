@@ -5,7 +5,7 @@ pub mod fuzzdex;
 use std::collections::HashSet;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
-use pyo3::exceptions;
+use pyo3::exceptions::PyRuntimeError;
 
 use crate::fuzzdex::{seeker, query};
 
@@ -21,6 +21,18 @@ pub enum FuzzDex {
 #[pyclass(name="FuzzDex")]
 pub struct PyFuzzDex {
     index: FuzzDex,
+}
+
+impl PyFuzzDex {
+    /// Helper to easily get index or create an exception.
+    fn get_index(&self) -> Result<&seeker::Index, PyErr> {
+        match &self.index {
+            FuzzDex::Indexer(_) =>
+                Err(PyErr::new::<PyRuntimeError, _>("Index is not yet finished.")),
+            FuzzDex::Index(index) =>
+                Ok(index)
+        }
+    }
 }
 
 /// Python wrapper for fuzzdex proper.
@@ -46,11 +58,10 @@ impl PyFuzzDex {
             FuzzDex::Indexer(indexer) => {
                 indexer.add_phrase(phrase, phrase_idx, constraints)
                     .map_err(|_|
-                             PyErr::new::<exceptions::PyRuntimeError, _>(
-                                 "Duplicate phrase index."))
+                             PyErr::new::<PyRuntimeError, _>("Duplicate phrase index."))
             }
             FuzzDex::Index(_) => {
-                Err(PyErr::new::<exceptions::PyRuntimeError, _>("Index is already finished."))
+                Err(PyErr::new::<PyRuntimeError, _>("Index is already finished."))
             }
         }
     }
@@ -59,7 +70,7 @@ impl PyFuzzDex {
     fn finish(&mut self, cache_size: Option<usize>) -> PyResult<()> {
         let cache_size = cache_size.unwrap_or(10000);
         if cache_size == 0 {
-            return Err(PyErr::new::<exceptions::PyRuntimeError, _>("Cache size must be at least 1"))
+            return Err(PyErr::new::<PyRuntimeError, _>("Cache size must be at least 1"))
         }
         match &mut self.index {
             FuzzDex::Indexer(indexer) => {
@@ -68,70 +79,59 @@ impl PyFuzzDex {
                 Ok(())
             }
             FuzzDex::Index(_) => {
-                Err(PyErr::new::<exceptions::PyRuntimeError, _>("Index is already finished."))
+                Err(PyErr::new::<PyRuntimeError, _>("Index is already finished."))
             }
         }
     }
 
     /// Query index using given criterions.
-    fn cache_stats<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
-        match &self.index {
-            FuzzDex::Indexer(_) => {
-                Err(PyErr::new::<exceptions::PyRuntimeError, _>("Index is not yet finished."))
-            }
-            FuzzDex::Index(index) => {
-                //let result = PyDict::new(py, pyresults);
-                let stats = index.cache_stats();
-                let pystats = PyDict::new(py);
-                pystats.set_item("hits", stats.hits).unwrap();
-                pystats.set_item("misses", stats.misses).unwrap();
-                pystats.set_item("inserts", stats.inserts).unwrap();
-                pystats.set_item("size", stats.size).unwrap();
-                Ok(pystats.into())
-            }
-        }
+    fn cache_stats(&self, py: Python) -> PyResult<PyObject> {
+        let index = self.get_index()?;
+        let stats = index.cache_stats();
+        let pystats = PyDict::new(py);
+        pystats.set_item("hits", stats.hits).unwrap();
+        pystats.set_item("misses", stats.misses).unwrap();
+        pystats.set_item("inserts", stats.inserts).unwrap();
+        pystats.set_item("size", stats.size).unwrap();
+        Ok(pystats.into())
     }
 
     /// Query index using given criterions.
     #[allow(clippy::too_many_arguments)]
     fn search<'py>(&self, py: Python<'py>,
-                   must: &str, should: Vec<&str>,
+                   must: Vec<&str>, should: Vec<&str>,
                    constraint: Option<usize>, limit: Option<usize>,
                    max_distance: Option<usize>,
                    scan_cutoff: Option<f32>) -> PyResult<PyObject> {
-        match &self.index {
-            FuzzDex::Indexer(_) => {
-                Err(PyErr::new::<exceptions::PyRuntimeError, _>("Index is not yet finished."))
-            }
-            FuzzDex::Index(index) => {
-                let query = query::Query::new(must, &should)
-                    .constraint(constraint)
-                    .max_distance(max_distance)
-                    .limit(limit)
-                    .scan_cutoff(scan_cutoff.unwrap_or(0.3));
-
-                let search_results = py.allow_threads(
-                    move || {
-                        index.search(&query)
-                    });
-                let pyresults = search_results.iter()
-                    .map(|result| {
-                        let pyresult = PyDict::new(py);
-                        pyresult.set_item("origin", result.origin).unwrap();
-                        pyresult.set_item("index", result.index).unwrap();
-                        pyresult.set_item("token", result.token).unwrap();
-                        pyresult.set_item("distance", result.distance).unwrap();
-                        pyresult.set_item("score", result.score).unwrap();
-                        pyresult.set_item("should_score", result.should_score).unwrap();
-                        pyresult
-                    });
-
-                let list = PyList::new(py, pyresults);
-                Ok(list.into())
-            }
+        let index = self.get_index()?;
+        if must.len() != 1 {
+            return Err(PyErr::new::<PyRuntimeError, _>("Exactly one `must token` is supported."));
         }
-    }
+        let query = query::Query::new(&must, &should)
+            .constraint(constraint)
+            .max_distance(max_distance)
+            .limit(limit)
+            .scan_cutoff(scan_cutoff.unwrap_or(0.3));
 
+        let search_results = py.allow_threads(
+            move || {
+                index.search(&query)
+            });
+        let pyresults = search_results.iter()
+            .map(|result| {
+                let pyresult = PyDict::new(py);
+                pyresult.set_item("origin", result.origin).unwrap();
+                pyresult.set_item("index", result.index).unwrap();
+                pyresult.set_item("token", result.token).unwrap();
+                pyresult.set_item("distance", result.distance).unwrap();
+                pyresult.set_item("score", result.score).unwrap();
+                pyresult.set_item("should_score", result.should_score).unwrap();
+                pyresult
+            });
+
+        let list = PyList::new(py, pyresults);
+        Ok(list.into())
+    }
 }
 
 /// Helper to calculate levenshtein distance from Python without additional libs.

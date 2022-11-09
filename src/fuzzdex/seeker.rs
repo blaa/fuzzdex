@@ -112,7 +112,7 @@ impl Index {
         /* LRU cache updates position even on get and needs mutable reference */
         {
             let mut cache = self.cache.lock().unwrap();
-            let heatmap = cache.heatmaps.get(token).map(|h| h.clone());
+            let heatmap = cache.heatmaps.get(token).cloned();
             if let Some(heatmap) = heatmap {
                 /* We operate on reference-counted heatmaps to eliminate unnecessary copying */
                 cache.stats.hits += 1;

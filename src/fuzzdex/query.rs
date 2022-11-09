@@ -23,8 +23,15 @@ impl Query {
     /// pass a single token, but if the internal tokenizer splits must into many
     /// tokens, the longest will be set as a `must` and others moved to
     /// `should`.
-    pub fn new(must: &str, should: &[&str]) -> Self {
+    ///
+    /// Currently only a single `must` token is allowed, but API accepts list
+    /// for future compatibility.
+    pub fn new(must: &[&str], should: &[&str]) -> Self {
+
         let mut should_tokens: Vec<String> = should.iter().map(|s| s.to_string()).collect();
+
+        assert!(must.len() == 1, "Only one `must token` is currently supported");
+        let must = must[0];
 
         /* Sometimes must token passed in query is not tokenized in the same way we do */
         let mut tokens: Vec<String> = utils::tokenize(must, 1);

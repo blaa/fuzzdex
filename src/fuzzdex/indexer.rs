@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::utils;
 use super::*;
@@ -45,9 +44,9 @@ impl Indexer {
     /// fuzzy-matched tokens. Phrase index must be unique within the index (or
     /// Err is returned) and can reference some external dictionary.
     pub fn add_phrase(&mut self, phrase: &str, phrase_idx: usize,
-                      constraints: Option<&HashSet<usize, FastHash>>) -> Result<(), ()> {
+                      constraints: Option<&HashSet<usize, FastHash>>) -> Result<(), DuplicateId> {
         if self.phrases.contains_key(&phrase_idx) {
-            Err(())
+            Err(DuplicateId {})
         } else {
             let entry = PhraseEntry::new(phrase_idx, phrase, constraints);
             for (token_idx, token) in entry.tokens.iter().enumerate() {

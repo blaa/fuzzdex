@@ -18,7 +18,7 @@ fn it_works() {
     assert_eq!(idx.cache_stats().inserts, 0);
 
     /* First query */
-    let query = Query::new("another", &["testing"]).limit(Some(60));
+    let query = Query::new(&["another"], &["testing"]).limit(Some(60));
     println!("Querying {:?}", query);
     let results = idx.search(&query);
 
@@ -33,7 +33,7 @@ fn it_works() {
     assert_eq!(idx.cache_stats().inserts, 1);
 
     /* Test constraint */
-    let query = Query::new("another", &["testing"])
+    let query = Query::new(&["another"], &["testing"])
         .constraint(Some(1));
     println!("Querying {:?}", query);
     let results = idx.search(&query);
@@ -47,7 +47,7 @@ fn it_works() {
     assert_eq!(idx.cache_stats().inserts, 1);
 
     /* Third query */
-    let query = Query::new("this", &["entry"]).limit(Some(60));
+    let query = Query::new(&["this"], &["entry"]).limit(Some(60));
     let results = idx.search(&query);
 
     for result in &results {
@@ -59,7 +59,7 @@ fn it_works() {
     assert!(results[0].should_score > 0.0, "First result should have non-zero should-score");
 
     /* Test multiple tokens matching in single phrase */
-    let query = Query::new("test", &[]).limit(Some(60));
+    let query = Query::new(&["test"], &[]).limit(Some(60));
     println!("Querying {:?}", query);
     let results = idx.search(&query);
 
@@ -86,7 +86,7 @@ fn it_works_with_case_change_and_spellerror() {
     let idx = idx.finish();
 
     /* Query with lowercase and single spell error */
-    let query = Query::new("waszawa", &[]).limit(Some(1));
+    let query = Query::new(&["waszawa"], &[]).limit(Some(1));
     println!("Querying {:?}", query);
     let results = idx.search(&query);
 
@@ -112,7 +112,7 @@ fn it_works_with_small_tokens() {
     let idx = idx.finish();
 
     /* First query */
-    let query = Query::new("may", &["1"]).limit(Some(1));
+    let query = Query::new(&["may"], &["1"]).limit(Some(1));
     println!("Querying {:?}", query);
     let results = idx.search(&query);
     for result in &results {
@@ -121,7 +121,7 @@ fn it_works_with_small_tokens() {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].index, 1);
 
-    let query = Query::new("may", &["2"]).limit(Some(1));
+    let query = Query::new(&["may"], &["2"]).limit(Some(1));
     println!("Querying {:?}", query);
     let results = idx.search(&query);
     for result in &results {
@@ -130,7 +130,7 @@ fn it_works_with_small_tokens() {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].index, 2);
 
-    let query = Query::new("may", &["3"]).limit(Some(1));
+    let query = Query::new(&["may"], &["3"]).limit(Some(1));
     println!("Querying {:?}", query);
     let results = idx.search(&query);
     for result in &results {
@@ -154,7 +154,7 @@ fn it_behaves_with_repeating_patterns() {
     assert!(idx.index.db.contains_key("bca"));
     assert!(idx.index.db.contains_key("cab"));
 
-    let query = Query::new("abc", &[]).max_distance(Some(3)).limit(Some(3));
+    let query = Query::new(&["abc"], &[]).max_distance(Some(3)).limit(Some(3));
     let results = idx.search(&query);
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].index, 1);
@@ -166,7 +166,7 @@ fn it_behaves_with_repeating_patterns() {
     idx.add_phrase(&repeating_phrase, 1, None).unwrap();
     let idx = idx.finish();
 
-    let query = Query::new("abc", &[]).limit(Some(3));
+    let query = Query::new(&["abc"], &[]).limit(Some(3));
     let results = idx.search(&query);
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].index, 1);
@@ -189,7 +189,7 @@ fn it_behaves_with_too_long_inputs() {
     assert!(idx.index.db.contains_key("cab"));
 
     println!("Added {}", long_string);
-    let query = Query::new(&long_string, &[]).limit(Some(3));
+    let query = Query::new(&[&long_string], &[]).limit(Some(3));
     let results = idx.search(&query);
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].index, 1);
@@ -204,7 +204,7 @@ fn it_behaves_with_too_long_inputs() {
     assert_eq!(1, idx.index.db.len());
     assert!(idx.index.db.contains_key("abc"));
 
-    let query = Query::new("abc", &[]).limit(Some(3));
+    let query = Query::new(&["abc"], &[]).limit(Some(3));
     let results = idx.search(&query);
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].index, 1);
@@ -220,12 +220,12 @@ fn it_detects_duplicate_phrase_idx() {
     assert!(idx.add_phrase("phrase three", 1, None).is_err());
     let idx = idx.finish();
 
-    let query = Query::new("rather", &[]).limit(Some(3));
+    let query = Query::new(&["rather"], &[]).limit(Some(3));
     let results = idx.search(&query);
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].index, 1);
 
-    let query = Query::new("duplicated", &[]).limit(Some(3));
+    let query = Query::new(&["duplicated"], &[]).limit(Some(3));
     let results = idx.search(&query);
     assert_eq!(results.len(), 0);
 }
