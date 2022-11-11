@@ -97,10 +97,10 @@ impl Indexer {
         Index::new(self, cache_size)
     }
 
-    /// Consume original Indexer and return Index class with querying ability
-    /// and default cache size of 10k entries.
+    /// Consume original Indexer and return Index class with querying ability and default cache
+    /// size of 500 entries (in our testcases 1000 entries is enough to have < 1% misses).
     pub fn finish(self) -> Index {
-        self.finish_with_cache(10000)
+        self.finish_with_cache(2000)
     }
 }
 

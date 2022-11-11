@@ -66,9 +66,9 @@ impl PyFuzzDex {
         }
     }
 
-    /// Finish indexing and move into searchable index with given internal cache size.
+    /// Finish indexing and move into searchable index with a given internal cache size.
     fn finish(&mut self, cache_size: Option<usize>) -> PyResult<()> {
-        let cache_size = cache_size.unwrap_or(10000);
+        let cache_size = cache_size.unwrap_or(2000);
         if cache_size == 0 {
             return Err(PyErr::new::<PyRuntimeError, _>("Cache size must be at least 1"))
         }
@@ -89,10 +89,10 @@ impl PyFuzzDex {
         let index = self.get_index()?;
         let stats = index.cache_stats();
         let pystats = PyDict::new(py);
-        pystats.set_item("hits", stats.hits).unwrap();
-        pystats.set_item("misses", stats.misses).unwrap();
-        pystats.set_item("inserts", stats.inserts).unwrap();
-        pystats.set_item("size", stats.size).unwrap();
+        pystats.set_item("hits", stats.hits)?;
+        pystats.set_item("misses", stats.misses)?;
+        pystats.set_item("inserts", stats.inserts)?;
+        pystats.set_item("size", stats.size)?;
         Ok(pystats.into())
     }
 
@@ -154,7 +154,8 @@ fn tokenize(phrase: &str, min_length: Option<usize>) -> PyResult<Vec<String>> {
 }
 
 #[pymodule]
-fn fuzzdex(_py: Python, m: &PyModule) -> PyResult<()> {
+#[pyo3(name="fuzzdex")]
+fn pyfuzzdex(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add("__doc__", "FUZZy inDEX in Rust")?;
     m.add_class::<PyFuzzDex>()?;
     m.add_function(wrap_pyfunction!(distance, m)?)?;

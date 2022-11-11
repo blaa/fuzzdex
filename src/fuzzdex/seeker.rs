@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::cmp::Ordering;
+// sorted_by
 use itertools::Itertools;
 
 use std::sync::Arc;
@@ -58,7 +59,6 @@ pub struct CacheStats {
     pub size: usize,
 }
 
-#[derive(Debug)]
 struct Cache {
     stats: CacheStats,
     heatmaps: LruCache<String, Arc<Heatmap>, FastHash>,

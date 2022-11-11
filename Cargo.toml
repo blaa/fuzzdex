@@ -1,6 +1,6 @@
 [package]
 name = "fuzzdex"
-version = "1.0.0"
+version = "1.1.0"
 authors = ["Tomasz bla Fortuna <bla@thera.be>"]
 edition = "2021"
 license = "MIT"
@@ -12,19 +12,18 @@ name = "fuzzdex"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "^0.16", features = ["extension-module"] }
-levenshtein-diff = "0.2.1"
+pyo3 = { version = "0.17.3", features = ["extension-module"] }
+levenshtein-diff = "0.2.3"
 lru = "^0.7"
 serde = { version = "1", features = ["derive"] }
 regex = "1"
 lazy_static = "1"
 unicode-segmentation = "1"
-unicode-normalization= "0.1.19"
-unicode_categories = "0.1"
-itertools = "=0.10"
+unicode-normalization= "0.1"
+unicode_categories = "^0.1"
+itertools = "^0.10"
 
 # Requires AESNI extensions
 # As hashmaps/hashsets are used extensively it speeds up some testcases
 # by over 10%.
-ahash = "0.7.6"
-
+ahash = "0.8.2"

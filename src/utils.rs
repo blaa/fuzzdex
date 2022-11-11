@@ -72,7 +72,9 @@ pub fn distance(side_a: &str, side_b: &str) -> usize {
 
     let graphemes_a = side_a.graphemes(true).take(500).collect::<Vec<&str>>();
     let graphemes_b = side_b.graphemes(true).take(500).collect::<Vec<&str>>();
-    let (distance, _) = levenshtein_diff::distance(&graphemes_a, &graphemes_b);
+    /* By default levenshtein module uses _memoization version. Tabulation seems
+     * faster in my tests */
+    let (distance, _) = levenshtein_diff::levenshtein_tabulation(&graphemes_a, &graphemes_b);
     distance
 }
 
