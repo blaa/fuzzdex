@@ -114,8 +114,8 @@ impl Index {
         for token in should_tokens {
             let mut trigrams = utils::trigramize(token);
             /* Use only first 4 trigrams for should scores */
-            trigrams.truncate(3);
-            for trigram in utils::trigramize(token) {
+            trigrams.truncate(4);
+            for trigram in trigrams {
                 if let Some(entry) = db.get(&trigram) {
                     for position in entry.positions.iter() {
                         // Ignore scores from phrases that don't match constraint.
