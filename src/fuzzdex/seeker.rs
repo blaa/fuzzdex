@@ -103,7 +103,8 @@ impl Index {
         heatmap
     }
 
-    fn should_scores(&self, heatmap: &Heatmap, should_tokens: &[String])
+    fn should_scores(&self, heatmap: &Heatmap, should_tokens: &[String],
+                     constraint: Option<usize>)
                      -> HashMap<usize, f32, FastHash> {
         let mut map: HashMap<usize, f32, FastHash> = HashMap::with_capacity_and_hasher(
             heatmap.len_phrases(), FastHash::new()
@@ -117,6 +118,15 @@ impl Index {
             for trigram in utils::trigramize(token) {
                 if let Some(entry) = db.get(&trigram) {
                     for position in entry.positions.iter() {
+                        // Ignore scores from phrases that don't match constraint.
+                        if let Some(constraint_id) = constraint {
+                            let phrase_entry = self.index.phrases.get(&position.phrase_idx).unwrap();
+                            if !phrase_entry.constraints.contains(&constraint_id) {
+                                // Ignore score from this phrase.
+                                continue;
+                            }
+                        }
+
                         if heatmap.has_phrase(position.phrase_idx) {
                             /* This phrase is within heatmap, we can calculate should score */
                             let score = map.entry(position.phrase_idx).or_insert(0.0);
@@ -247,7 +257,7 @@ impl Index {
 
     pub fn search(&self, query: &Query) -> Vec<SearchResult> {
         let heatmap = self.create_heatmap(&query.must);
-        let should_scores = self.should_scores(&heatmap, &query.should);
+        let should_scores = self.should_scores(&heatmap, &query.should, query.constraint);
         self.filtered_results(query, &heatmap, should_scores)
     }
 
