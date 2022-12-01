@@ -11,6 +11,8 @@ use crate::utils;
 use super::query::Query;
 use super::{Indexer, FastHash};
 
+mod heatmap;
+use heatmap::Heatmap;
 
 /// Query result
 #[derive(Debug, Clone, PartialEq)]
@@ -29,27 +31,6 @@ pub struct SearchResult<'a> {
     pub should_score: f32,
 }
 
-/* Trigram heatmap is a partial query result */
-#[derive(Debug, Clone)]
-struct PhraseHeatmap {
-    /// Phrase Index
-    phrase_idx: usize,
-    /// Token trigram score: token_idx -> score
-    tokens: HashMap<u32, f32, FastHash>,
-    /// Total phrase score
-    total_score: f32,
-}
-
-impl PhraseHeatmap {
-    fn new(phrase_idx: usize) -> PhraseHeatmap {
-        PhraseHeatmap {
-            phrase_idx,
-            tokens: HashMap::with_hasher(FastHash::new()),
-            total_score: 0.0,
-        }
-    }
-}
-
 #[derive(Clone, Default, Debug)]
 pub struct CacheStats {
     pub hits: usize,
@@ -62,24 +43,6 @@ pub struct CacheStats {
 struct Cache {
     stats: CacheStats,
     heatmaps: LruCache<String, Arc<Heatmap>, FastHash>,
-}
-
-#[derive(Debug, Clone)]
-struct Heatmap {
-    /* Trigram score */
-    /* phrase_idx -> token_idx -> score */
-    phrases: HashMap<usize, PhraseHeatmap, FastHash>,
-    /* Max phrase score */
-    max_score: f32,
-}
-
-impl Heatmap {
-    fn new() -> Heatmap {
-        Heatmap {
-            phrases: HashMap::with_capacity_and_hasher(8, FastHash::new()),
-            max_score: 0.0,
-        }
-    }
 }
 
 /// Produced by Index::finish() and can be queried.
@@ -126,18 +89,7 @@ impl Index {
         for trigram in utils::trigramize(token) {
             if let Some(entry) = db.get(&trigram) {
                 for position in entry.positions.iter() {
-                    /* Get or create phrase-level entry */
-                    let phrase_heatmap = heatmap.phrases.entry(position.phrase_idx).or_insert_with(
-                        || PhraseHeatmap::new(position.phrase_idx));
-
-                    /* Get or create token-level entry */
-                    let token_score = phrase_heatmap.tokens.entry(position.token_idx).or_insert(0.0);
-                    *token_score += entry.score;
-
-                    phrase_heatmap.total_score += entry.score;
-                    if phrase_heatmap.total_score > heatmap.max_score {
-                        heatmap.max_score = phrase_heatmap.total_score;
-                    }
+                    heatmap.add_phrase(position.phrase_idx, position.token_idx, entry.score);
                 }
             }
         }
@@ -154,7 +106,7 @@ impl Index {
     fn should_scores(&self, heatmap: &Heatmap, should_tokens: &[String])
                      -> HashMap<usize, f32, FastHash> {
         let mut map: HashMap<usize, f32, FastHash> = HashMap::with_capacity_and_hasher(
-            heatmap.phrases.len(), FastHash::new()
+            heatmap.len_phrases(), FastHash::new()
         );
         let db = &self.index.db;
 
@@ -165,7 +117,7 @@ impl Index {
             for trigram in utils::trigramize(token) {
                 if let Some(entry) = db.get(&trigram) {
                     for position in entry.positions.iter() {
-                        if heatmap.phrases.contains_key(&position.phrase_idx) {
+                        if heatmap.has_phrase(position.phrase_idx) {
                             /* This phrase is within heatmap, we can calculate should score */
                             let score = map.entry(position.phrase_idx).or_insert(0.0);
                             *score += entry.score;
