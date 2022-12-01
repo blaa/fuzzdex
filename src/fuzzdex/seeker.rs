@@ -246,8 +246,8 @@ impl Index {
         }
 
         results.sort_unstable_by(|a, b| {
-            let side_a = (a.distance, -a.score, -a.should_score, a.origin.len());
-            let side_b = (b.distance, -b.score, -b.should_score, b.origin.len());
+            let side_a = (a.distance, -a.score, -a.should_score, a.origin.len(), &a.origin);
+            let side_b = (b.distance, -b.score, -b.should_score, b.origin.len(), &b.origin);
             side_a.partial_cmp(&side_b).unwrap_or(Ordering::Equal)
         });
 
