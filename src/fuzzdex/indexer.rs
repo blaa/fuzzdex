@@ -76,22 +76,32 @@ impl Indexer {
          *
          * Let's try to put average count as "1".
          *
-         * Hyperbolic function can smooth the scores and put them in nice range:
+         * Hyperbolic function can smooth the scores and put them in a nice range:
          * 0.5 + tanh(x)/2
-         * Has range 0 - 1 for values -inf to inf (-3 to 3 de facto).
-         * 0.5 + tanh((avg - val - 1) / avg)/2
-         * Will have 0.5 at exactly average, distinguish all lower values
-         * (higher score) up to 0.87, and will distinguish plenty of higher
-         * values.
+         * Has range 0 - 1 for values -inf to inf. Only around -5 to 5 is
+         * meaningful for a 32 bit float). Hence we will divide by 5*max.
+         *
+         * 0.5 + tanh(5.0 * (avg - val - 1) / max)/2
+         * Will have around 0.5 at average, max 1. Distinguish all lower values
+         * (higher score), and will distinguish plenty of higher values.
          */
 
         let average: f32 = self.db.values()
             .map(|v| v.positions.len())
             .sum::<usize>() as f32 / self.db.len() as f32;
 
+        let max: usize = self.db
+            .values()
+            .map(|v| v.positions.len())
+            .max_by_key(|val| *val)
+            .unwrap_or(1);
+
         for (_trigram, entry) in self.db.iter_mut() {
-            let input = entry.score;
-            let score = 0.5 + ((average - input - 1.0) / average).tanh() / 2.0;
+            let popularity = entry.score;
+            let centered = average - popularity - 1.0;
+            let ranged = 5.0 * centered / (max as f32);
+            let zero_to_one = 0.5 + (ranged).tanh() / 2.0;
+            let score = zero_to_one;
             entry.score = score;
         }
         Index::new(self, cache_size)
