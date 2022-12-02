@@ -113,7 +113,10 @@ impl Index {
 
         for token in should_tokens {
             let mut trigrams = utils::trigramize(token);
-            /* Use only first 4 trigrams for should scores */
+            /* Use only first 4 trigrams for should scores. This has to effects:
+             * - Improves speed for long words.
+             * - Reduces impact of should score on ordering during final pass.
+             */
             trigrams.truncate(4);
             for trigram in trigrams {
                 if let Some(entry) = db.get(&trigram) {
@@ -176,9 +179,16 @@ impl Index {
                 }
             })
             .sorted_by(|(heat_a, phrase_a, should_a), (heat_b, phrase_b, should_b)| {
-                /* Sort by score and then by a should score; for identical - prefer shortest. */
-                let side_a = (heat_b.total_score, should_b, phrase_a.origin.len());
-                let side_b = (heat_a.total_score, should_a, phrase_b.origin.len());
+                /* The sorted data are scanned and when fuzzdex is happy with the result
+                 * will stop scanning. Sorting impacts the behaviour of this early break.
+                 *
+                 * Sort by a combined score, and prefer shortest solutions if
+                 * score is equal. The early break triggers only if the must
+                 * token matches perfectly. With sorting by must-token score
+                 * only, it could miss good solutions.
+                 */
+                let side_a = (heat_b.total_score + should_b, phrase_a.origin.len());
+                let side_b = (heat_a.total_score + should_a, phrase_b.origin.len());
                 side_a.partial_cmp(&side_b).expect("Some scores were NaN, and they shouldn't")
             });
 
@@ -197,8 +207,8 @@ impl Index {
                 break;
             }
 
-            /* Iterate over tokens by decreasing trigram score until first with
-             * an acceptable distance is found */
+            /* Iterate over tokens inside this phrase by decreasing trigram
+             * score until the first with an acceptable distance is found */
             let valid_token = phrase_heatmap.tokens
                 .iter()
                 .map(|(&token_idx, &token_score)| {
@@ -237,10 +247,11 @@ impl Index {
                 /*
                  * Early break if:
                  * - we reached the limit,
-                 * - we already have "good enough" result by the distance metric.
+                 * - we already have "good enough" result by the distance metric,
+                 * - we have considered solution with best must+should score.
                  */
                if best_distance == 0 && results.len() >= limit {
-                    break;
+                   break;
                }
             }
         }

@@ -17,7 +17,8 @@ from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import Pool
 
 
-config = {'limit': 30}
+# With improved should-sorting limit of 10 is good enough.
+config = {'limit': 10}
 
 
 @dataclass
